@@ -1,10 +1,19 @@
-import argparse
-import datetime
-import json
 import logging
 import os
 import sys
 import warnings
+
+# Настройка окружения
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
+
+# Настройка логирования и подавление предупреждений
+logging.basicConfig(level=logging.WARNING)
+warnings.filterwarnings("ignore")
+
+import argparse
+import datetime
+import json
 from distutils.util import strtobool
 from random import randint
 from time import sleep
@@ -17,20 +26,6 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
-
-# Настройка уровня логирования для различных библиотек
-logging.getLogger("tensorflow").setLevel(logging.WARNING)
-logging.getLogger("h5py").setLevel(logging.WARNING)
-logging.getLogger("jax").setLevel(logging.WARNING)
-logging.getLogger("numexpr").setLevel(logging.WARNING)
-logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
-
-# Подавление предупреждений
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 sys.path.append(os.path.join(os.getcwd()))
 from rvc.lib.algorithm.commons import grad_norm, slice_segments
