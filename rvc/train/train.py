@@ -35,7 +35,7 @@ from rvc.train.extract.extract_model import extract_model
 from rvc.train.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 from rvc.train.mel_processing import MultiScaleMelSpectrogramLoss, mel_spectrogram_torch, spec_to_mel_torch
 from rvc.train.utils.data_utils import DistributedBucketSampler, TextAudioCollateMultiNSFsid, TextAudioLoaderMultiNSFsid
-from rvc.train.utils.train_utils import HParams, latest_checkpoint_path, load_checkpoint, save_checkpoint
+from rvc.train.utils.train_utils import HParams, save_checkpoint, attempt_load_checkpoint_pair
 from rvc.train.visualization import mel_spectrogram_similarity, plot_pitch_to_numpy, plot_spectrogram_to_numpy
 
 torch.backends.cudnn.deterministic = False
@@ -55,6 +55,7 @@ def get_hparams(init=True):
     parser.add_argument("-g", "--gpus", type=str, default="0")
     parser.add_argument("-s", "--sex", type=float, default=0.0)
     parser.add_argument("-sz", "--save_to_zip", type=lambda x: bool(strtobool(x)), default=False)
+    parser.add_argument("-sb", "--save_backup", type=lambda x: bool(strtobool(x)), default=False)
 
     args = parser.parse_args()
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
@@ -75,6 +76,7 @@ def get_hparams(init=True):
     hparams.gpus = args.gpus
     hparams.sex = args.sex
     hparams.save_to_zip = args.save_to_zip
+    hparams.save_backup = args.save_backup
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
     return hparams
 
@@ -203,28 +205,60 @@ def run(hps, rank, n_gpus, device, device_id):
         net_g = DDP(net_g, device_ids=[device_id])
         net_d = DDP(net_d, device_ids=[device_id])
 
+    epoch_str = 1
+    global_step = 0
+
     try:
-        _, _, _, epoch_str = load_checkpoint(latest_checkpoint_path(hps.model_dir, "D_*.pth"), net_d, optim_d)
-        _, _, _, epoch_str = load_checkpoint(latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g)
+        # Попытка №1: Загрузить основные файлы
+        if rank == 0:
+            print("Попытка загрузки основных чекпоинтов...", flush=True)
 
-        epoch_str += 1
+        epoch = attempt_load_checkpoint_pair(
+            net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint.pth"),
+            net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint.pth"),
+        )
+        epoch_str = epoch + 1
         global_step = (epoch_str - 1) * len(train_loader)
-    except:
-        epoch_str = 1
-        global_step = 0
 
-        if hps.pretrainG not in ("", "None"):
+        if rank == 0:
+            print(f"Чекпоинты успешно загружены. Продолжение тренировки с эпохи {epoch_str}", flush=True)
+
+    except Exception as error:
+        if rank == 0:
+            print(f"Не удалось загрузить основные чекпоинты: {error}", flush=True)
+
+        try:
+            # Попытка №2: Загрузить бэкап-файлы
             if rank == 0:
-                print(f"Загрузка претрейна '{hps.pretrainG}'", flush=True)
-            g_model = net_g.module if hasattr(net_g, "module") else net_g
-            g_model.load_state_dict(torch.load(hps.pretrainG, map_location="cpu", weights_only=True)["model"])
+                print("Попытка загрузки бэкап-чекпоинтов...", flush=True)
 
-        if hps.pretrainD not in ("", "None"):
+            epoch = attempt_load_checkpoint_pair(
+                net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint_backup.pth"),
+                net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint_backup.pth"),
+            )
+            epoch_str = epoch + 1
+            global_step = (epoch_str - 1) * len(train_loader)
+
             if rank == 0:
-                print(f"Загрузка претрейна '{hps.pretrainD}'", flush=True)
-            d_model = net_d.module if hasattr(net_d, "module") else net_d
-            d_model.load_state_dict(torch.load(hps.pretrainD, map_location="cpu", weights_only=True)["model"])
+                print(f"Бэкап-чекпоинты успешно загружены. Продолжение тренировки с эпохи {epoch_str}", flush=True)
 
+        except:
+            epoch_str = 1
+            global_step = 0
+
+            # Если чекпоинты не загрузились, пробуем загрузить претрейны
+            if hps.pretrainG not in ("", "None"):
+                if rank == 0:
+                    print(f"Загрузка претрейна '{hps.pretrainG}'", flush=True)
+                g_model = net_g.module if hasattr(net_g, "module") else net_g
+                g_model.load_state_dict(torch.load(hps.pretrainG, map_location="cpu", weights_only=True)["model"])
+
+            if hps.pretrainD not in ("", "None"):
+                if rank == 0:
+                    print(f"Загрузка претрейна '{hps.pretrainD}'", flush=True)
+                d_model = net_d.module if hasattr(net_d, "module") else net_d
+                d_model.load_state_dict(torch.load(hps.pretrainD, map_location="cpu", weights_only=True)["model"])
+    
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
@@ -315,25 +349,25 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         mel_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel)
 
         scalar_dict = {
-            "grad/norm_d": grad_norm_d,  # Норма градиентов Дискриминатора
-            "grad/norm_g": grad_norm_g,  # Норма градиентов Генератора
-            "learning_rate/d": current_lr_d,  # Скорость обучения Дискриминатора
-            "learning_rate/g": current_lr_g,  # Скорость обучения Генератора
-            "loss/avg/d": loss_disc,  # Потеря Дискриминатора
-            "loss/avg/g": loss_gen,  # Потеря Генератора
-            "loss/g/fm": loss_fm,  # Потеря на основе совпадения признаков между реальными и сгенерированными данными
-            "loss/g/mel": loss_mel,  # Потеря на основе мел-спектрограммы
-            "loss/g/kl": loss_kl,  # Потеря на основе расхождения распределений в модели
-            "loss/g/total": loss_gen_all,  # Общая потеря Генератора
-            "metrics/mel_sim": mel_similarity,  # Сходство между сгенерированной и реальной мел-спектрограммами
-            "metrics/mse_wave": F.mse_loss(y_hat, wave),  # Среднеквадратичная ошибка между реальными и сгенерированными аудиосигналами
-            "metrics/mse_pitch": F.mse_loss(pitchf, pitch),  # Среднеквадратичная ошибка между реальными и сгенерированными интонациями
+            "grad/norm_d": grad_norm_d,
+            "grad/norm_g": grad_norm_g,
+            "learning_rate/d": current_lr_d,
+            "learning_rate/g": current_lr_g,
+            "loss/avg/d": loss_disc,
+            "loss/avg/g": loss_gen,
+            "loss/g/fm": loss_fm,
+            "loss/g/mel": loss_mel,
+            "loss/g/kl": loss_kl,
+            "loss/g/total": loss_gen_all,
+            "metrics/mel_sim": mel_similarity,
+            "metrics/mse_wave": F.mse_loss(y_hat, wave),
+            "metrics/mse_pitch": F.mse_loss(pitchf, pitch),
         }
         image_dict = {
-            "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),  # Мел-спектрограмма реальных данных
-            "mel/slice/fake": plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),  # Мел-спектрограмма сгенерированных данных
-            "pitch/real": plot_pitch_to_numpy(pitch[0].data.cpu().numpy()),  # Интонация реальных данных
-            "pitch/fake": plot_pitch_to_numpy(pitchf[0].data.cpu().numpy()),  # Интонация сгенерированных данных
+            "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
+            "mel/slice/fake": plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),
+            "pitch/real": plot_pitch_to_numpy(pitch[0].data.cpu().numpy()),
+            "pitch/fake": plot_pitch_to_numpy(pitchf[0].data.cpu().numpy()),
         }
         for k, v in scalar_dict.items():
             writer.add_scalar(k, v, epoch)
@@ -353,11 +387,24 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         save_checkpoint_cond = (epoch % hps.save_every_epoch == 0) or save_final
 
         if save_checkpoint_cond:
-            # Сохраняем чекпоинты в любом случае (регулярное или финальное сохранение)
-            save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "G_checkpoint.pth"))
-            save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "D_checkpoint.pth"))
+            g_checkpoint_path = os.path.join(hps.model_dir, "G_checkpoint.pth")
+            d_checkpoint_path = os.path.join(hps.model_dir, "D_checkpoint.pth")
 
-            # Определяем тип сохранения модели
+            if hps.save_backup:
+                g_backup_path = os.path.join(hps.model_dir, "G_checkpoint_backup.pth")
+                d_backup_path = os.path.join(hps.model_dir, "D_checkpoint_backup.pth")
+                
+                if os.path.exists(g_checkpoint_path) and os.path.exists(d_checkpoint_path):
+                    print("Создание бэкапа предыдущего чекпоинта...", flush=True)
+                    try:
+                        os.replace(g_checkpoint_path, g_backup_path)
+                        os.replace(d_checkpoint_path, d_backup_path)
+                    except Exception as e:
+                        print(f"Не удалось создать бэкап чекпоинта: {e}", flush=True)
+
+            save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, g_checkpoint_path)
+            save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, d_checkpoint_path)
+
             checkpoint = net_g.module.state_dict() if hasattr(net_g, "module") else net_g.state_dict()
             print(
                 extract_model(
@@ -376,7 +423,6 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
             )
 
         if save_final:
-            # Действия при завершении обучения
             if hps.save_to_zip:
                 zip_filename = os.path.join(hps.model_dir, f"{hps.model_name}.zip")
 

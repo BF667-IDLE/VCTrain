@@ -62,6 +62,20 @@ def latest_checkpoint_path(dir_path, regex="G_*.pth"):
     return checkpoints[-1] if checkpoints else None
 
 
+def attempt_load_checkpoint(net_g, optim_g, g_path, net_d, optim_d, d_path):
+    if not (os.path.exists(g_path) and os.path.exists(d_path)):
+        raise FileNotFoundError(f"Один или оба файла чекпоинта не найдены: {g_path}, {d_path}")
+
+    # Загружаем оба чекпоинта и проверяем, совпадают ли эпохи
+    _, _, _, epoch_d = load_checkpoint(d_path, net_d, optim_d)
+    _, _, _, epoch_g = load_checkpoint(g_path, net_g, optim_g)
+
+    if epoch_d != epoch_g:
+        raise ValueError(f"Несоответствие эпох в чекпоинтах: G={epoch_g}, D={epoch_d}")
+
+    return epoch_g
+
+
 class HParams:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
