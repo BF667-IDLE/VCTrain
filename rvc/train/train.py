@@ -35,7 +35,7 @@ from rvc.train.extract.extract_model import extract_model
 from rvc.train.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 from rvc.train.mel_processing import MultiScaleMelSpectrogramLoss, mel_spectrogram_torch, spec_to_mel_torch
 from rvc.train.utils.data_utils import DistributedBucketSampler, TextAudioCollateMultiNSFsid, TextAudioLoaderMultiNSFsid
-from rvc.train.utils.train_utils import HParams, save_checkpoint, attempt_load_checkpoint_pair
+from rvc.train.utils.train_utils import HParams, attempt_load_checkpoint_pair, save_checkpoint
 from rvc.train.visualization import mel_spectrogram_similarity, plot_pitch_to_numpy, plot_spectrogram_to_numpy
 
 torch.backends.cudnn.deterministic = False
@@ -208,8 +208,12 @@ def run(hps, rank, n_gpus, device, device_id):
     try:
         # Попытка №1: Загрузить основные файлы
         epoch_str = attempt_load_checkpoint_pair(
-            net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint.pth"),
-            net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint.pth"),
+            net_g,
+            optim_g,
+            os.path.join(hps.model_dir, "G_checkpoint.pth"),
+            net_d,
+            optim_d,
+            os.path.join(hps.model_dir, "D_checkpoint.pth"),
         )
         epoch_str += 1
         global_step = (epoch_str - 1) * len(train_loader)
@@ -218,8 +222,12 @@ def run(hps, rank, n_gpus, device, device_id):
         try:
             # Попытка №2: Загрузить бэкап-файлы
             epoch_str = attempt_load_checkpoint_pair(
-                net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint_backup.pth"),
-                net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint_backup.pth"),
+                net_g,
+                optim_g,
+                os.path.join(hps.model_dir, "G_checkpoint_backup.pth"),
+                net_d,
+                optim_d,
+                os.path.join(hps.model_dir, "D_checkpoint_backup.pth"),
             )
             epoch_str += 1
             global_step = (epoch_str - 1) * len(train_loader)
@@ -240,7 +248,7 @@ def run(hps, rank, n_gpus, device, device_id):
                     print(f"Загрузка претрейна '{hps.pretrainD}'", flush=True)
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
                 d_model.load_state_dict(torch.load(hps.pretrainD, map_location="cpu", weights_only=True)["model"])
-    
+
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
@@ -375,7 +383,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
             if hps.save_backup:
                 g_backup_path = os.path.join(hps.model_dir, "G_checkpoint_backup.pth")
                 d_backup_path = os.path.join(hps.model_dir, "D_checkpoint_backup.pth")
-                
+
                 if os.path.exists(g_checkpoint_path) and os.path.exists(d_checkpoint_path):
                     print("Создание бэкапа предыдущего чекпоинта...", flush=True)
                     try:
