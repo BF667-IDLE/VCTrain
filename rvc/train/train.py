@@ -205,42 +205,24 @@ def run(hps, rank, n_gpus, device, device_id):
         net_g = DDP(net_g, device_ids=[device_id])
         net_d = DDP(net_d, device_ids=[device_id])
 
-    epoch_str = 1
-    global_step = 0
-
     try:
         # Попытка №1: Загрузить основные файлы
-        if rank == 0:
-            print("Попытка загрузки основных чекпоинтов...", flush=True)
-
-        epoch = attempt_load_checkpoint_pair(
+        epoch_str = attempt_load_checkpoint_pair(
             net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint.pth"),
             net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint.pth"),
         )
-        epoch_str = epoch + 1
+        epoch_str += 1
         global_step = (epoch_str - 1) * len(train_loader)
 
-        if rank == 0:
-            print(f"Чекпоинты успешно загружены. Продолжение тренировки с эпохи {epoch_str}", flush=True)
-
-    except Exception as error:
-        if rank == 0:
-            print(f"Не удалось загрузить основные чекпоинты: {error}", flush=True)
-
+    except:
         try:
             # Попытка №2: Загрузить бэкап-файлы
-            if rank == 0:
-                print("Попытка загрузки бэкап-чекпоинтов...", flush=True)
-
-            epoch = attempt_load_checkpoint_pair(
+            epoch_str = attempt_load_checkpoint_pair(
                 net_g, optim_g, os.path.join(hps.model_dir, "G_checkpoint_backup.pth"),
                 net_d, optim_d, os.path.join(hps.model_dir, "D_checkpoint_backup.pth"),
             )
-            epoch_str = epoch + 1
+            epoch_str += 1
             global_step = (epoch_str - 1) * len(train_loader)
-
-            if rank == 0:
-                print(f"Бэкап-чекпоинты успешно загружены. Продолжение тренировки с эпохи {epoch_str}", flush=True)
 
         except:
             epoch_str = 1
