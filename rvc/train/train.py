@@ -42,7 +42,7 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
 
 
-def get_hparams(init=True):
+def get_hparams():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--experiment_dir", type=str, required=True)
     parser.add_argument("-m", "--model_name", type=str, required=True)
@@ -264,20 +264,17 @@ def run(hps, rank, n_gpus, device, device_id):
 def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_loss, device, device_id, scaler):
     global global_step
 
-    if writers is not None:
-        writer = writers[0]
-
-    epoch_recorder = EpochRecorder()
-
     net_g, net_d = nets
     optim_g, optim_d = optims
 
+    writer = writers[0] if writers is not None else None
     train_loader = loaders[0] if loaders is not None else None
     train_loader.batch_sampler.set_epoch(epoch)
 
     net_g.train()
     net_d.train()
 
+    epoch_recorder = EpochRecorder()
     for _, info in enumerate(train_loader):
         if device.type == "cuda":
             info = [tensor.cuda(device_id, non_blocking=True) for tensor in info]
