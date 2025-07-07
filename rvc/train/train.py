@@ -255,7 +255,17 @@ def run(hps, rank, n_gpus, device, device_id):
 
     for epoch in range(epoch_str, hps.total_epoch + 1):
         train_and_evaluate(
-            hps, rank, epoch, [net_g, net_d], [optim_g, optim_d], [train_loader, None], [writer_eval], fn_mel_loss, device, device_id, scaler,
+            hps,
+            rank,
+            epoch,
+            [net_g, net_d],
+            [optim_g, optim_d],
+            [train_loader, None],
+            [writer_eval],
+            fn_mel_loss,
+            device,
+            device_id,
+            scaler,
         )
         scheduler_g.step()
         scheduler_d.step()
