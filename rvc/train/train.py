@@ -53,7 +53,6 @@ def get_hparams(init=True):
     parser.add_argument("-pg", "--pretrainG", type=str, default="")
     parser.add_argument("-pd", "--pretrainD", type=str, default="")
     parser.add_argument("-g", "--gpus", type=str, default="0")
-    parser.add_argument("-s", "--sex", type=float, default=0.0)
     parser.add_argument("-sz", "--save_to_zip", type=lambda x: bool(strtobool(x)), default=False)
     parser.add_argument("-sb", "--save_backup", type=lambda x: bool(strtobool(x)), default=False)
 
@@ -74,7 +73,6 @@ def get_hparams(init=True):
     hparams.pretrainG = args.pretrainG
     hparams.pretrainD = args.pretrainD
     hparams.gpus = args.gpus
-    hparams.sex = args.sex
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
@@ -406,7 +404,6 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
                     hps.data.sample_rate,
                     hps.model_dir,
                     hps.vocoder,
-                    hps.sex,
                     final_save=save_final,
                 ),
                 flush=True,
