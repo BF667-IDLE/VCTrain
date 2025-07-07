@@ -80,7 +80,9 @@ def get_hparams(init=True):
 
 
 hps = get_hparams()
+
 global_step = 0
+train_dtype = torch.float16  # torch.float32
 
 
 class EpochRecorder:
@@ -197,6 +199,7 @@ def run(hps, rank, n_gpus, device, device_id):
         eps=hps.train.eps,
     )
 
+    scaler = torch.cuda.amp.GradScaler(enabled=(train_dtype == torch.float16))
     fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
 
     if n_gpus > 1 and device.type == "cuda":
@@ -252,13 +255,13 @@ def run(hps, rank, n_gpus, device, device_id):
 
     for epoch in range(epoch_str, hps.total_epoch + 1):
         train_and_evaluate(
-            hps, rank, epoch, [net_g, net_d], [optim_g, optim_d], [train_loader, None], [writer_eval], fn_mel_loss, device, device_id
+            hps, rank, epoch, [net_g, net_d], [optim_g, optim_d], [train_loader, None], [writer_eval], fn_mel_loss, device, device_id, scaler,
         )
         scheduler_g.step()
         scheduler_d.step()
 
 
-def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_loss, device, device_id):
+def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_loss, device, device_id, scaler):
     global global_step
 
     if writers is not None:
@@ -282,31 +285,38 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
             info = [tensor.to(device) for tensor in info]
 
         phone, phone_lengths, pitch, pitchf, spec, spec_lengths, wave, _, sid = info
-        model_output = net_g(phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid)
-        y_hat, ids_slice, _, z_mask, (_, z_p, m_p, logs_p, _, logs_q) = model_output
-
-        wave = slice_segments(wave, ids_slice * hps.data.hop_length, hps.train.segment_size, dim=3)
+        with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+            model_output = net_g(phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid)
+            y_hat, ids_slice, _, z_mask, (_, z_p, m_p, logs_p, _, logs_q) = model_output
+            wave = slice_segments(wave, ids_slice * hps.data.hop_length, hps.train.segment_size, dim=3)
 
         # Discriminator loss
         for _ in range(1):  # default x1
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
-            loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
             optim_d.zero_grad()
-            loss_disc.backward()
+            with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+                y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+            scaler.scale(loss_disc).backward()
+            scaler.unscale_(optim_d)
             grad_norm_d = grad_norm(net_d.parameters())
-            optim_d.step()
+            scaler.step(optim_d)
+            scaler.update()
 
         # Generator loss
-        _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
-        loss_mel = fn_mel_loss(wave, y_hat) * hps.train.c_mel / 3.0
-        loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-        loss_fm = feature_loss(fmap_r, fmap_g)
-        loss_gen, _ = generator_loss(y_d_hat_g)
-        loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
-        optim_g.zero_grad()
-        loss_gen_all.backward()
-        grad_norm_g = grad_norm(net_g.parameters())
-        optim_g.step()
+        for _ in range(1):  # default x1
+            optim_g.zero_grad()
+            with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+                _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+                loss_mel = fn_mel_loss(wave, y_hat) * hps.train.c_mel / 3.0
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+                loss_fm = feature_loss(fmap_r, fmap_g)
+                loss_gen, _ = generator_loss(y_d_hat_g)
+                loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+            scaler.scale(loss_gen_all).backward()
+            scaler.unscale_(optim_g)
+            grad_norm_g = grad_norm(net_g.parameters())
+            scaler.step(optim_g)
+            scaler.update()
 
         # learning rates
         current_lr_d = optim_d.param_groups[0]["lr"]
