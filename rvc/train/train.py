@@ -55,6 +55,7 @@ def get_hparams(init=True):
     parser.add_argument("-g", "--gpus", type=str, default="0")
     parser.add_argument("-sz", "--save_to_zip", type=lambda x: bool(strtobool(x)), default=False)
     parser.add_argument("-sb", "--save_backup", type=lambda x: bool(strtobool(x)), default=False)
+    parser.add_argument("-sm", "--save_memory", type=lambda x: bool(strtobool(x)), default=False)
 
     args = parser.parse_args()
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
@@ -75,14 +76,13 @@ def get_hparams(init=True):
     hparams.gpus = args.gpus
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
+    hparams.save_memory = args.save_memory
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
     return hparams
 
 
 hps = get_hparams()
-
 global_step = 0
-train_dtype = torch.float16  # torch.float32
 
 
 class EpochRecorder:
@@ -199,7 +199,7 @@ def run(hps, rank, n_gpus, device, device_id):
         eps=hps.train.eps,
     )
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(train_dtype == torch.float16))
+    scaler = torch.cuda.amp.GradScaler(enabled=hps.save_memory)
     fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
 
     if n_gpus > 1 and device.type == "cuda":
@@ -285,7 +285,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
             info = [tensor.to(device) for tensor in info]
 
         phone, phone_lengths, pitch, pitchf, spec, spec_lengths, wave, _, sid = info
-        with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+        with torch.cuda.amp.autocast(enabled=hps.save_memory):
             model_output = net_g(phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid)
             y_hat, ids_slice, _, z_mask, (_, z_p, m_p, logs_p, _, logs_q) = model_output
             wave = slice_segments(wave, ids_slice * hps.data.hop_length, hps.train.segment_size, dim=3)
@@ -293,7 +293,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         # Discriminator loss
         for _ in range(1):  # default x1
             optim_d.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+            with torch.cuda.amp.autocast(enabled=hps.save_memory):
                 y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
                 loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
             scaler.scale(loss_disc).backward()
@@ -305,7 +305,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         # Generator loss
         for _ in range(1):  # default x1
             optim_g.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(train_dtype == torch.float16)):
+            with torch.cuda.amp.autocast(enabled=hps.save_memory):
                 _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
                 loss_mel = fn_mel_loss(wave, y_hat) * hps.train.c_mel / 3.0
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
