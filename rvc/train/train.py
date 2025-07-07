@@ -159,7 +159,7 @@ def run(hps, rank, n_gpus, device, device_id):
     )
     train_loader = DataLoader(
         train_dataset,
-        num_workers=4,
+        num_workers=os.cpu_count(),  # 4
         shuffle=False,
         pin_memory=True,
         collate_fn=collate_fn,
