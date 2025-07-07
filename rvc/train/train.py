@@ -36,7 +36,7 @@ from rvc.train.losses import discriminator_loss, feature_loss, generator_loss, k
 from rvc.train.mel_processing import MultiScaleMelSpectrogramLoss, mel_spectrogram_torch, spec_to_mel_torch
 from rvc.train.utils.data_utils import DistributedBucketSampler, TextAudioCollateMultiNSFsid, TextAudioLoaderMultiNSFsid
 from rvc.train.utils.train_utils import HParams, attempt_load_checkpoint_pair, save_checkpoint
-from rvc.train.visualization import mel_spectrogram_similarity, plot_pitch_to_numpy, plot_spectrogram_to_numpy
+from rvc.train.visualization import mel_spectrogram_similarity, plot_spectrogram_to_numpy
 
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
@@ -364,8 +364,6 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         image_dict = {
             "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
             "mel/slice/fake": plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),
-            "pitch/real": plot_pitch_to_numpy(pitch[0].data.cpu().numpy()),
-            "pitch/fake": plot_pitch_to_numpy(pitchf[0].data.cpu().numpy()),
         }
         for k, v in scalar_dict.items():
             writer.add_scalar(k, v, epoch)

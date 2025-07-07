@@ -20,22 +20,6 @@ def plot_spectrogram_to_numpy(spectrogram, figsize=(10, 4), cmap="viridis"):
     return data
 
 
-def plot_pitch_to_numpy(pitch_values, figsize=(12, 3)):
-    """Визуализация кривой pitch (F0)."""
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(pitch_values, color="r", linewidth=1, label="Pitch")
-    ax.set_xlabel("Кадры")
-    ax.set_ylabel("Частота (Гц)")
-    ax.legend(loc="upper right")
-    plt.tight_layout()
-
-    fig.canvas.draw()
-    buf = fig.canvas.buffer_rgba()
-    data = np.asarray(buf, dtype=np.uint8)
-    plt.close(fig)
-    return data
-
-
 def mel_spectrogram_similarity(y_hat_mel, y_mel):
     """Сходство между сгенерированной и реальной мел-спектрограммами"""
     device = y_hat_mel.device
