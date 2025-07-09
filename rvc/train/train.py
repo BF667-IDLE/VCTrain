@@ -238,13 +238,13 @@ def run(hps, rank, n_gpus, device, device_id):
             global_step = 0
 
             # Если чекпоинты не загрузились, пробуем загрузить претрейны
-            if hps.pretrainG not in ("", "None"):
+            if hps.pretrainG not in ("", "None", None):
                 if rank == 0:
                     print(f"Загрузка претрейна '{hps.pretrainG}'", flush=True)
                 g_model = net_g.module if hasattr(net_g, "module") else net_g
                 g_model.load_state_dict(torch.load(hps.pretrainG, map_location="cpu", weights_only=True)["model"])
 
-            if hps.pretrainD not in ("", "None"):
+            if hps.pretrainD not in ("", "None", None):
                 if rank == 0:
                     print(f"Загрузка претрейна '{hps.pretrainD}'", flush=True)
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
