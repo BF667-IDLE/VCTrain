@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore")
 import argparse
 import datetime
 import json
+import pathlib
 from distutils.util import strtobool
 from random import randint
 from time import sleep
@@ -42,6 +43,23 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
 
 
+def generate_config(model_path, config_save_path, sample_rate, vocoder):
+    config_path = os.path.join("rvc", "configs", f"{sample_rate}.json")
+    if not pathlib.Path(config_save_path).exists():
+        with open(config_save_path, "w", encoding="utf-8") as f:
+            with open(config_path, "r") as config_file:
+                config_data = json.load(config_file)
+                config_data["model"]["vocoder"] = vocoder
+                json.dump(
+                    config_data,
+                    f,
+                    ensure_ascii=False,
+                    indent=4,
+                    sort_keys=True,
+                )
+            f.write("\n")
+
+
 def get_hparams():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--experiment_dir", type=str, required=True)
@@ -49,17 +67,23 @@ def get_hparams():
     parser.add_argument("-te", "--total_epoch", type=int, required=True)
     parser.add_argument("-se", "--save_every_epoch", type=int, required=True)
     parser.add_argument("-bs", "--batch_size", type=int, required=True)
+    parser.add_argument("-sr", "--sample_rate", type=int, required=True)
     parser.add_argument("-voc", "--vocoder", type=str, default="HiFi-GAN")
     parser.add_argument("-pg", "--pretrainG", type=str, default="")
     parser.add_argument("-pd", "--pretrainD", type=str, default="")
     parser.add_argument("-g", "--gpus", type=str, default="0")
     parser.add_argument("-sz", "--save_to_zip", type=lambda x: bool(strtobool(x)), default=False)
     parser.add_argument("-sb", "--save_backup", type=lambda x: bool(strtobool(x)), default=False)
-
     args = parser.parse_args()
-    experiment_dir = os.path.join(args.experiment_dir, args.model_name)
 
+    experiment_dir = os.path.join(args.experiment_dir, args.model_name)
     config_save_path = os.path.join(experiment_dir, "data", "config.json")
+
+    # Генерация файла конфигурации
+    if not os.path.exists(config_save_path):
+        generate_config(experiment_dir, config_save_path, args.sample_rate, args.vocoder)
+
+    # Загрузка файла конфигурации
     with open(config_save_path, "r") as f:
         config = json.load(f)
 
@@ -69,7 +93,6 @@ def get_hparams():
     hparams.total_epoch = args.total_epoch
     hparams.save_every_epoch = args.save_every_epoch
     hparams.batch_size = args.batch_size
-    hparams.vocoder = args.vocoder
     hparams.pretrainG = args.pretrainG
     hparams.pretrainD = args.pretrainD
     hparams.gpus = args.gpus
@@ -171,7 +194,7 @@ def run(hps, rank, n_gpus, device, device_id):
         hps.train.segment_size // hps.data.hop_length,
         **hps.model,
         sr=hps.data.sample_rate,
-        vocoder=hps.vocoder,
+        vocoder=hps.model.vocoder,
         checkpointing=False,
         randomized=True,
     )
@@ -407,7 +430,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
                     global_step,
                     hps.data.sample_rate,
                     hps.model_dir,
-                    hps.vocoder,
+                    hps.model.vocoder,
                     final_save=save_final,
                 ),
                 flush=True,
