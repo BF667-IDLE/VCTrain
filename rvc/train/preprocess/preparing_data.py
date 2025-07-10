@@ -3,13 +3,13 @@ import os
 import sys
 import traceback
 import warnings
+from random import shuffle
 
 import fairseq
 import numpy as np
 import soundfile as sf
 import torch
 from tqdm import tqdm
-from random import shuffle
 
 sys.path.append(os.getcwd())
 
@@ -199,7 +199,7 @@ def generate_filelist(model_path: str, sample_rate: int, include_mutes: int = 2)
 
     shuffle(options)
 
-    with open(os.path.join(model_path, "data", "filelist.txt"), "w") as f:
+    with open(os.path.join(model_path, "data", "filelist.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(options))
 
 

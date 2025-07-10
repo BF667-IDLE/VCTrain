@@ -43,11 +43,11 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
 
 
-def generate_config(model_path, config_save_path, sample_rate, vocoder):
+def generate_config(config_save_path, sample_rate, vocoder):
     config_path = os.path.join("rvc", "configs", f"{sample_rate}.json")
     if not pathlib.Path(config_save_path).exists():
         with open(config_save_path, "w", encoding="utf-8") as f:
-            with open(config_path, "r") as config_file:
+            with open(config_path, "r", encoding="utf-8") as config_file:
                 config_data = json.load(config_file)
                 config_data["model"]["vocoder"] = vocoder
                 json.dump(
@@ -81,10 +81,10 @@ def get_hparams():
 
     # Генерация файла конфигурации
     if not os.path.exists(config_save_path):
-        generate_config(experiment_dir, config_save_path, args.sample_rate, args.vocoder)
+        generate_config(config_save_path, args.sample_rate, args.vocoder)
 
     # Загрузка файла конфигурации
-    with open(config_save_path, "r") as f:
+    with open(config_save_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
     hparams = HParams(**config)
