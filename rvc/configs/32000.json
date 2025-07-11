@@ -24,7 +24,6 @@
     "inter_channels": 192,
     "hidden_channels": 192,
     "filter_channels": 768,
-    "text_enc_hidden_dim": 768,
     "n_heads": 2,
     "n_layers": 6,
     "kernel_size": 3,
@@ -37,6 +36,7 @@
     "upsample_kernel_sizes": [20,16,4,4],
     "use_spectral_norm": false,
     "gin_channels": 256,
-    "spk_embed_dim": 109
+    "spk_embed_dim": 109,
+    "vocoder": "HiFi-GAN"
   }
 }

@@ -3,6 +3,7 @@ import os
 import sys
 import traceback
 import warnings
+from random import shuffle
 
 import fairseq
 import numpy as np
@@ -14,7 +15,6 @@ sys.path.append(os.getcwd())
 
 from rvc.lib.audio import load_audio
 from rvc.lib.rmvpe import RMVPE
-from rvc.train.preprocess.preparing_files import generate_config, generate_filelist
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -158,12 +158,56 @@ class DataPreprocessor:
         raise FileNotFoundError(error_message)
 
 
+def generate_filelist(model_path: str, sample_rate: int, include_mutes: int = 2):
+    mute_base_path = os.path.join(os.getcwd(), "logs", "mute")
+
+    f0_dir, f0nsf_dir = None, None
+    gt_wavs_dir = os.path.join(model_path, "data", "sliced_audios")
+    feature_dir = os.path.join(model_path, "data", "features")
+    f0_dir = os.path.join(model_path, "data", "f0_quantized")
+    f0nsf_dir = os.path.join(model_path, "data", "f0_voiced")
+
+    gt_wavs_files = set(name.split(".")[0] for name in os.listdir(gt_wavs_dir))
+    feature_files = set(name.split(".")[0] for name in os.listdir(feature_dir))
+    f0_files = set(name.split(".")[0] for name in os.listdir(f0_dir))
+    f0nsf_files = set(name.split(".")[0] for name in os.listdir(f0nsf_dir))
+
+    names = gt_wavs_files & feature_files & f0_files & f0nsf_files
+
+    sids = []
+    options = []
+    for name in names:
+        sid = name.split("_")[0]
+        if sid not in sids:
+            sids.append(sid)
+        options.append(
+            f"{os.path.join(gt_wavs_dir, name)}.wav|"
+            f"{os.path.join(feature_dir, name)}.npy|"
+            f"{os.path.join(f0_dir, name)}.wav.npy|"
+            f"{os.path.join(f0nsf_dir, name)}.wav.npy|{sid}"
+        )
+
+    if include_mutes > 0:
+        mute_audio_path = os.path.join(mute_base_path, "sliced_audios", f"mute{sample_rate}.wav")
+        mute_feature_path = os.path.join(mute_base_path, "features", "mute.npy")
+        mute_f0_path = os.path.join(mute_base_path, "f0_quantized", "mute.wav.npy")
+        mute_f0nsf_path = os.path.join(mute_base_path, "f0_voiced", "mute.wav.npy")
+
+        # добавление (include_mutes) файлов для каждого sid
+        for sid in sids * include_mutes:
+            options.append(f"{mute_audio_path}|{mute_feature_path}|{mute_f0_path}|{mute_f0nsf_path}|{sid}")
+
+    shuffle(options)
+
+    with open(os.path.join(model_path, "data", "filelist.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(options))
+
+
 if __name__ == "__main__":
     try:
         preprocessor = DataPreprocessor()
         preprocessor.process_files()
 
-        generate_config(exp_dir, sample_rate)
         generate_filelist(exp_dir, sample_rate, include_mutes)
     except Exception as e:
         print(f"Критическая ошибка: {str(e)}")
