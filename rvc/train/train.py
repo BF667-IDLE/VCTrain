@@ -50,14 +50,7 @@ def generate_config(config_save_path, sample_rate, vocoder):
             with open(config_path, "r", encoding="utf-8") as config_file:
                 config_data = json.load(config_file)
                 config_data["model"]["vocoder"] = vocoder
-                json.dump(
-                    config_data,
-                    f,
-                    ensure_ascii=False,
-                    indent=4,
-                    sort_keys=True,
-                )
-            f.write("\n")
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
 
 
 def get_hparams():
