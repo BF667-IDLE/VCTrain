@@ -67,7 +67,7 @@ def get_hparams():
     parser.add_argument("-te", "--total_epoch", type=int, required=True)
     parser.add_argument("-se", "--save_every_epoch", type=int, required=True)
     parser.add_argument("-bs", "--batch_size", type=int, required=True)
-    parser.add_argument("-sr", "--sample_rate", type=int, required=True)
+    parser.add_argument("-sr", "--sample_rate", type=int, default=40000)
     parser.add_argument("-voc", "--vocoder", type=str, default="HiFi-GAN")
     parser.add_argument("-pg", "--pretrainG", type=str, default="")
     parser.add_argument("-pd", "--pretrainD", type=str, default="")
@@ -194,7 +194,6 @@ def run(hps, rank, n_gpus, device, device_id):
         hps.train.segment_size // hps.data.hop_length,
         **hps.model,
         sr=hps.data.sample_rate,
-        vocoder=hps.model.vocoder,
         checkpointing=False,
         randomized=True,
     )
