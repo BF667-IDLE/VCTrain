@@ -42,6 +42,8 @@ from rvc.train.visualization import mel_spectrogram_similarity, plot_spectrogram
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
 
+global_step = 0
+
 
 def generate_config(config_save_path, sample_rate, vocoder):
     config_path = os.path.join("rvc", "configs", f"{sample_rate}.json")
@@ -55,18 +57,18 @@ def generate_config(config_save_path, sample_rate, vocoder):
 
 def get_hparams():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--experiment_dir", type=str, required=True)
-    parser.add_argument("-m", "--model_name", type=str, required=True)
-    parser.add_argument("-te", "--total_epoch", type=int, required=True)
-    parser.add_argument("-se", "--save_every_epoch", type=int, required=True)
-    parser.add_argument("-bs", "--batch_size", type=int, required=True)
-    parser.add_argument("-sr", "--sample_rate", type=int, default=40000)
-    parser.add_argument("-voc", "--vocoder", type=str, default="HiFi-GAN")
-    parser.add_argument("-pg", "--pretrainG", type=str, default="")
-    parser.add_argument("-pd", "--pretrainD", type=str, default="")
-    parser.add_argument("-g", "--gpus", type=str, default="0")
-    parser.add_argument("-sz", "--save_to_zip", type=lambda x: bool(strtobool(x)), default=False)
-    parser.add_argument("-sb", "--save_backup", type=lambda x: bool(strtobool(x)), default=False)
+    parser.add_argument("--experiment_dir", type=str, required=True)
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--total_epoch", type=int, choices=range(1, 10001), default=300)
+    parser.add_argument("--save_every_epoch", type=int, choices=range(1, 101), default=25)
+    parser.add_argument("--batch_size", type=int, choices=range(1, 51), default=8)
+    parser.add_argument("--sample_rate", type=int, choices=[32000, 40000, 48000], default=40000)
+    parser.add_argument("--vocoder", type=str, choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"], default="HiFi-GAN")
+    parser.add_argument("--pretrain_g", type=str, default=None)
+    parser.add_argument("--pretrain_d", type=str, default=None)
+    parser.add_argument("--gpus", type=str, default="0")
+    parser.add_argument("--save_to_zip", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
+    parser.add_argument("--save_backup", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
     args = parser.parse_args()
 
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
@@ -86,17 +88,13 @@ def get_hparams():
     hparams.total_epoch = args.total_epoch
     hparams.save_every_epoch = args.save_every_epoch
     hparams.batch_size = args.batch_size
-    hparams.pretrainG = args.pretrainG
-    hparams.pretrainD = args.pretrainD
+    hparams.pretrain_g = args.pretrain_g
+    hparams.pretrain_d = args.pretrain_d
     hparams.gpus = args.gpus
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
     return hparams
-
-
-hps = get_hparams()
-global_step = 0
 
 
 class EpochRecorder:
@@ -105,29 +103,25 @@ class EpochRecorder:
 
     def record(self):
         now_time = ttime()
-        elapsed_time = now_time - self.last_time
+        elapsed_time = round(now_time - self.last_time, 1)
         self.last_time = now_time
-        elapsed_time = round(elapsed_time, 1)
-        elapsed_time_str = str(datetime.timedelta(seconds=int(elapsed_time)))
-        return f"[{elapsed_time_str}]"
+        return f"[{str(datetime.timedelta(seconds=int(elapsed_time)))}]"
 
 
 def main():
+    hps = get_hparams()
+
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        gpus = [int(item) for item in hps.gpus.split("-")]
-        n_gpus = len(gpus)
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-        gpus = [0]
-        n_gpus = 1
-    else:
-        device = torch.device("cpu")
-        gpus = [0]
-        n_gpus = 1
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else 
+        "mps" if torch.backends.mps.is_available() else 
+        "cpu"
+    )
+    gpus = [int(item) for item in hps.gpus.split("-")] if device.type == "cuda" else [0]
+    n_gpus = len(gpus)
+    if device.type == "cpu":
         print("Обучение с использованием процессора займёт много времени.", flush=True)
 
     children = []
@@ -139,157 +133,151 @@ def main():
         children.append(subproc)
         subproc.start()
 
-    for i in range(n_gpus):
-        children[i].join()
+    for subproc in children:
+        subproc.join()
+
+    sys.exit(0)
 
 
 def run(hps, rank, n_gpus, device, device_id):
     global global_step
-
-    writer_eval = None
-    if rank == 0:
-        writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
-
-    dist.init_process_group(
-        backend="gloo" if sys.platform == "win32" or device.type != "cuda" else "nccl",
-        init_method="env://",
-        world_size=n_gpus if device.type == "cuda" else 1,
-        rank=rank if device.type == "cuda" else 0,
-    )
-
-    torch.manual_seed(hps.train.seed)
-    if torch.cuda.is_available():
-        torch.cuda.set_device(device_id)
-
-    collate_fn = TextAudioCollateMultiNSFsid()
-    train_dataset = TextAudioLoaderMultiNSFsid(hps.data)
-    train_sampler = DistributedBucketSampler(
-        train_dataset,
-        hps.batch_size * n_gpus,
-        [50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
-        num_replicas=n_gpus,
-        rank=rank,
-        shuffle=True,
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        num_workers=2,  # 4
-        shuffle=False,
-        pin_memory=True,
-        collate_fn=collate_fn,
-        batch_sampler=train_sampler,
-        persistent_workers=True,
-        prefetch_factor=8,
-    )
-
-    net_g = Synthesizer(
-        hps.data.filter_length // 2 + 1,
-        hps.train.segment_size // hps.data.hop_length,
-        **hps.model,
-        sr=hps.data.sample_rate,
-        checkpointing=False,
-        randomized=True,
-    )
-    net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm, checkpointing=False)
-
-    if torch.cuda.is_available():
-        net_g = net_g.cuda(device_id)
-        net_d = net_d.cuda(device_id)
-    else:
-        net_g = net_g.to(device)
-        net_d = net_d.to(device)
-
-    optim_g = torch.optim.AdamW(
-        net_g.parameters(),
-        hps.train.learning_rate,
-        betas=hps.train.betas,
-        eps=hps.train.eps,
-    )
-    optim_d = torch.optim.AdamW(
-        net_d.parameters(),
-        hps.train.learning_rate,
-        betas=hps.train.betas,
-        eps=hps.train.eps,
-    )
-
-    fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
-
-    if n_gpus > 1 and device.type == "cuda":
-        net_g = DDP(net_g, device_ids=[device_id])
-        net_d = DDP(net_d, device_ids=[device_id])
-
     try:
-        # Попытка №1: Загрузить основные файлы
-        epoch_str = attempt_load_checkpoint_pair(
-            net_g,
-            optim_g,
-            os.path.join(hps.model_dir, "G_checkpoint.pth"),
-            net_d,
-            optim_d,
-            os.path.join(hps.model_dir, "D_checkpoint.pth"),
+        writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval")) if rank == 0 else None
+        fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
+
+        dist.init_process_group(
+            backend="gloo" if sys.platform == "win32" or device.type != "cuda" else "nccl",
+            init_method="env://",
+            world_size=n_gpus if device.type == "cuda" else 1,
+            rank=rank if device.type == "cuda" else 0,
         )
-        epoch_str += 1
-        global_step = (epoch_str - 1) * len(train_loader)
 
-    except:
-        try:
-            # Попытка №2: Загрузить бэкап-файлы
-            epoch_str = attempt_load_checkpoint_pair(
-                net_g,
-                optim_g,
-                os.path.join(hps.model_dir, "G_checkpoint_backup.pth"),
-                net_d,
-                optim_d,
-                os.path.join(hps.model_dir, "D_checkpoint_backup.pth"),
-            )
-            epoch_str += 1
-            global_step = (epoch_str - 1) * len(train_loader)
+        torch.manual_seed(hps.train.seed)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(device_id)
 
-        except:
+        collate_fn = TextAudioCollateMultiNSFsid()
+        train_dataset = TextAudioLoaderMultiNSFsid(hps.data)
+        train_sampler = DistributedBucketSampler(
+            train_dataset,
+            hps.batch_size * n_gpus,
+            [50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
+            num_replicas=n_gpus,
+            rank=rank,
+            shuffle=True,
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            num_workers=2,  # 4
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=collate_fn,
+            batch_sampler=train_sampler,
+            persistent_workers=True,
+            prefetch_factor=8,
+        )
+
+        net_g = Synthesizer(
+            hps.data.filter_length // 2 + 1,
+            hps.train.segment_size // hps.data.hop_length,
+            **hps.model,
+            sr=hps.data.sample_rate,
+            checkpointing=False,
+            randomized=True,
+        )
+        net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm, checkpointing=False)
+
+        if device.type == "cuda":
+            net_g = net_g.cuda(device_id)
+            net_d = net_d.cuda(device_id)
+        else:
+            net_g = net_g.to(device)
+            net_d = net_d.to(device)
+
+        optim_g = torch.optim.AdamW(
+            net_g.parameters(),
+            hps.train.learning_rate,
+            betas=hps.train.betas,
+            eps=hps.train.eps,
+        )
+        optim_d = torch.optim.AdamW(
+            net_d.parameters(),
+            hps.train.learning_rate,
+            betas=hps.train.betas,
+            eps=hps.train.eps,
+        )
+
+        if n_gpus > 1 and device.type == "cuda":
+            net_g = DDP(net_g, device_ids=[device_id])
+            net_d = DDP(net_d, device_ids=[device_id])
+
+        # Загрузка чекпоинтов
+        checkpoint_paths = [
+            ("G_checkpoint.pth", "D_checkpoint.pth"),
+            ("G_checkpoint_backup.pth", "D_checkpoint_backup.pth")
+        ]
+
+        loaded = False
+        for g_file, d_file in checkpoint_paths:
+            g_path = os.path.join(hps.model_dir, g_file)
+            d_path = os.path.join(hps.model_dir, d_file)
+            if os.path.exists(g_path) and os.path.exists(d_path):
+                try:
+                    epoch_str = attempt_load_checkpoint_pair(net_g, optim_g, g_path, net_d, optim_d, d_path)
+                    epoch_str += 1
+                    global_step = (epoch_str - 1) * len(train_loader)
+                    loaded = True
+                    break
+                except:
+                    continue
+
+        if not loaded:
             epoch_str = 1
             global_step = 0
 
             # Если чекпоинты не загрузились, пробуем загрузить претрейны
-            if hps.pretrainG not in ("", "None", None):
+            if hps.pretrain_g not in ("", "None", None):
                 if rank == 0:
-                    print(f"Загрузка претрейна '{hps.pretrainG}'", flush=True)
+                    print(f"Загрузка претрейна '{hps.pretrain_g}'", flush=True)
                 g_model = net_g.module if hasattr(net_g, "module") else net_g
-                g_model.load_state_dict(torch.load(hps.pretrainG, map_location="cpu", weights_only=True)["model"])
+                g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=True)["model"])
 
-            if hps.pretrainD not in ("", "None", None):
+            if hps.pretrain_d not in ("", "None", None):
                 if rank == 0:
-                    print(f"Загрузка претрейна '{hps.pretrainD}'", flush=True)
+                    print(f"Загрузка претрейна '{hps.pretrain_d}'", flush=True)
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
-                d_model.load_state_dict(torch.load(hps.pretrainD, map_location="cpu", weights_only=True)["model"])
+                d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=True)["model"])
 
-    scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
-    scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
+        scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
+        scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
-    for epoch in range(epoch_str, hps.total_epoch + 1):
-        train_and_evaluate(
-            hps,
-            rank,
-            epoch,
-            [net_g, net_d],
-            [optim_g, optim_d],
-            [train_loader, None],
-            [writer_eval],
-            fn_mel_loss,
-            device,
-            device_id,
-        )
-        scheduler_g.step()
-        scheduler_d.step()
+        print("\nЗапуск процесса обучения модели...", flush=True)
+        for epoch in range(epoch_str, hps.total_epoch + 1):
+            train_and_evaluate(
+                hps,
+                rank,
+                epoch,
+                [net_g, net_d],
+                [optim_g, optim_d],
+                train_loader,
+                writer_eval,
+                fn_mel_loss,
+                device,
+                device_id,
+            )
+            scheduler_g.step()
+            scheduler_d.step()
+    finally:
+        # Уничтожение группы процессов для корректного закрытия программы
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
-def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_loss, device, device_id):
+def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval, fn_mel_loss, device, device_id):
     global global_step
 
     net_g, net_d = nets
     optim_g, optim_d = optims
-
-    writer = writers[0] if writers is not None else None
-    train_loader = loaders[0] if loaders is not None else None
     train_loader.batch_sampler.set_epoch(epoch)
 
     net_g.train()
@@ -377,9 +365,9 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
             "mel/slice/fake": plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),
         }
         for k, v in scalar_dict.items():
-            writer.add_scalar(k, v, epoch)
+            writer_eval.add_scalar(k, v, epoch)
         for k, v in image_dict.items():
-            writer.add_image(k, v, epoch, dataformats="HWC")
+            writer_eval.add_image(k, v, epoch, dataformats="HWC")
 
     if rank == 0:
         print(
@@ -394,55 +382,37 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, loaders, writers, fn_mel_
         save_checkpoint_cond = (epoch % hps.save_every_epoch == 0) or save_final
 
         if save_checkpoint_cond:
-            g_checkpoint_path = os.path.join(hps.model_dir, "G_checkpoint.pth")
-            d_checkpoint_path = os.path.join(hps.model_dir, "D_checkpoint.pth")
+            g_path = os.path.join(hps.model_dir, "G_checkpoint.pth")
+            d_path = os.path.join(hps.model_dir, "D_checkpoint.pth")
 
-            if hps.save_backup:
-                g_backup_path = os.path.join(hps.model_dir, "G_checkpoint_backup.pth")
-                d_backup_path = os.path.join(hps.model_dir, "D_checkpoint_backup.pth")
+            # Создание бэкапов
+            if hps.save_backup and os.path.exists(g_path) and os.path.exists(d_path):
+                print("Создание бэкапа предыдущего чекпоинта...", flush=True)
+                try:
+                    os.replace(g_path, g_path.replace("checkpoint", "checkpoint_backup"))
+                    os.replace(d_path, d_path.replace("checkpoint", "checkpoint_backup"))
+                except Exception as e:
+                    print(f"Не удалось создать бэкап чекпоинта: {e}", flush=True)
 
-                if os.path.exists(g_checkpoint_path) and os.path.exists(d_checkpoint_path):
-                    print("Создание бэкапа предыдущего чекпоинта...", flush=True)
-                    try:
-                        os.replace(g_checkpoint_path, g_backup_path)
-                        os.replace(d_checkpoint_path, d_backup_path)
-                    except Exception as e:
-                        print(f"Не удалось создать бэкап чекпоинта: {e}", flush=True)
-
-            save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, g_checkpoint_path)
-            save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, d_checkpoint_path)
+            save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, g_path)
+            save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, d_path)
 
             checkpoint = net_g.module.state_dict() if hasattr(net_g, "module") else net_g.state_dict()
-            print(
-                extract_model(
-                    hps,
-                    checkpoint,
-                    hps.model_name,
-                    epoch,
-                    global_step,
-                    hps.data.sample_rate,
-                    hps.model_dir,
-                    hps.model.vocoder,
-                    final_save=save_final,
-                ),
-                flush=True,
-            )
+            print(extract_model(hps, checkpoint, epoch, global_step, final_save=save_final), flush=True)
 
         if save_final:
             if hps.save_to_zip:
-                zip_filename = os.path.join(hps.model_dir, f"{hps.model_name}.zip")
-
                 import zipfile
 
+                zip_filename = os.path.join(hps.model_dir, f"{hps.model_name}.zip")
                 with zipfile.ZipFile(zip_filename, "w") as zipf:
                     for ext in (".pth", ".index"):
                         file_path = os.path.join(hps.model_dir, f"{hps.model_name}{ext}")
                         zipf.write(file_path, os.path.basename(file_path))
                 print(f"Файлы модели заархивированы в `{zip_filename}`", flush=True)
 
-            print("Обучение успешно завершено.", flush=True)
-            sleep(1)
-            os._exit(2333333)
+            print("\nОбучение успешно завершено!", flush=True)
+            return
 
 
 if __name__ == "__main__":
