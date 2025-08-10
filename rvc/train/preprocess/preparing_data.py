@@ -5,10 +5,11 @@ import traceback
 import warnings
 from random import shuffle
 
-import fairseq
 import numpy as np
 import soundfile as sf
 import torch
+from fairseq.checkpoint_utils import load_model_ensemble_and_task
+from fairseq.data.dictionary import Dictionary
 from tqdm import tqdm
 
 sys.path.append(os.getcwd())
@@ -49,15 +50,9 @@ class DataPreprocessor:
     def _load_hubert_model(self):
         """Загрузка модели HuBERT"""
         model_path = "assets/hubert/hubert_base.pt"
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(
-                f"Error: HuBERT model not found at {model_path}, "
-                "download it from https://huggingface.co/lj1995/VoiceConversionWebUI/tree/main"
-            )
-
-        models, _, _ = fairseq.checkpoint_utils.load_model_ensemble_and_task([model_path], suffix="")
-        model = models[0].to(device).eval()
-        return model
+        torch.serialization.add_safe_globals([Dictionary])
+        models, _, _ = load_model_ensemble_and_task([model_path], suffix="")
+        return models[0].to(device).eval()
 
     def compute_f0(self, path, f0_method):
         """Вычисление F0"""
