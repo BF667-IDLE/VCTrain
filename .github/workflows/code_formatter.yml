@@ -28,16 +28,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install ruff pyupgrade
-
-      - name: Run pyupgrade
-        run: pyupgrade --py311-plus . || true
+        run: pip install ruff
 
       - name: Run Ruff Linter (with auto-fix)
-        run: ruff check . --fix --target-version py311 --select ALL --no-preview || true
+        run: ruff check $(git ls-files '*.py') --fix --target-version py311 --select ALL --no-preview || true
 
       - name: Run Ruff Formatter
-        run: ruff format . --target-version py311 --line-length 140 --no-preview || true
+        run: ruff format $(git ls-files '*.py') --target-version py311 --line-length 140 --no-preview || true
 
       - name: Check for changes
         id: changes
@@ -52,8 +49,16 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          commit-message: "style: автоматическое форматирование кода"
+          commit-message: "style(ruff): автоматическое форматирование кода"
           title: "🎨 Автоматическое форматирование кода"
-          body: "Этот PR создан автоматически для применения форматирования кода с помощью `Ruff` и `pyupgrade`."
+          body: |
+            Этот Pull Request был создан автоматически GitHub Actions для применения единых стилей оформления кода.
+
+            🔧 Форматирование выполнено с помощью [`Ruff`](https://github.com/astral-sh/ruff):
+            > - Автоматическое исправление стиля и линтинга (`ruff check --fix`)
+            > - Применение форматтера (`ruff format`)
+
+            ✨ Изменения затрагивают только стиль кода, логика работы не изменена.
+            > Целевая версия Python: **3.11**
           branch: "formatter/${{ github.ref_name }}"
           delete-branch: true
