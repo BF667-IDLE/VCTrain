@@ -60,5 +60,5 @@ jobs:
 
             ✨ Изменения затрагивают только стиль кода, логика работы не изменена.
             > Целевая версия Python: **3.10**
-          branch: "${{ github.ref_name }}/formatter"
+          branch: "formatter/${{ github.ref_name }}"
           delete-branch: true
