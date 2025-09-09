@@ -298,7 +298,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
         # Discriminator loss
         for _ in range(1):  # default x1
             y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
-            loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+            loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
             optim_d.zero_grad()
             loss_disc.backward()
             grad_norm_d = grad_norm(net_d.parameters())
@@ -310,7 +310,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             loss_mel = fn_mel_loss(wave, y_hat) * hps.train.c_mel / 3.0
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
             loss_fm = feature_loss(fmap_r, fmap_g)
-            loss_gen, _ = generator_loss(y_d_hat_g)
+            loss_gen = generator_loss(y_d_hat_g)
             loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
             optim_g.zero_grad()
             loss_gen_all.backward()
