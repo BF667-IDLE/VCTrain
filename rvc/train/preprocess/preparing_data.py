@@ -21,11 +21,11 @@ sys.path.append(os.getcwd())
 from rvc.lib.audio import load_audio
 from rvc.lib.rmvpe import RMVPE
 
-exp_dir = str(sys.argv[1])  # Директория с данными
-arch_fairseq = str(sys.argv[2])  # Архитектура Fairseq
-f0_method = str(sys.argv[3])  # Метод извлечения F0
-sample_rate = int(sys.argv[4])  # Частота дискретизации
-include_mutes = int(sys.argv[5])  # Количество мьют файлов
+exp_dir = str(sys.argv[1])  # Директория с данными, подготовленными скриптом `preprocess.py`
+arch_fairseq = str(sys.argv[2])  # Архитектура Fairseq / Fairseq, Fairseq2
+f0_method = str(sys.argv[3])  # Метод извлечения F0 / rmvpe, rmvpe+
+sample_rate = int(sys.argv[4])  # Частота дискретизации для генерации filelist.txt
+include_mutes = int(sys.argv[5])  # Количество мьют файлов на одного спикера / По умолчанию = 2
 
 
 class DataPreprocessor:
