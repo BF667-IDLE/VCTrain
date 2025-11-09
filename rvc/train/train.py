@@ -94,6 +94,23 @@ def get_hparams():
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
+    print(" \n\nПАРАМЕТРЫ ОБУЧЕНИЯ ")
+    print("="*80)
+    print(f"{'Папка сохранения:':<25} {experiment_dir}")
+    print(f"{'Имя модели:':<25} {args.model_name}")
+    print(f"{'Эпох обучения:':<25} {args.total_epoch}")
+    print(f"{'Сохранение каждые:':<25} {args.save_every_epoch} эпох")
+    print(f"{'Размер батча:':<25} {args.batch_size}")
+    print(f"{'Частота дискретизации:':<25} {args.sample_rate} Hz")
+    print(f"{'Вокодер:':<25} {args.vocoder}")
+    if args.pretrain_g:
+        print(f"{'Pretrain G:':<25} {args.pretrain_g}")
+    if args.pretrain_d:
+        print(f"{'Pretrain D:':<25} {args.pretrain_d}")
+    print(f"{'GPU:':<25} {args.gpus}")
+    print(f"{'Сохранение в ZIP:':<25} {'Да' if args.save_to_zip else 'Нет'}")
+    print(f"{'Резервное копирование:':<25} {'Да' if args.save_backup else 'Нет'}")
+    print("="*80 + "\n")
     return hparams
 
 
