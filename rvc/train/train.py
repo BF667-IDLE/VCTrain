@@ -158,6 +158,7 @@ def main():
 
 def run(hps, rank, n_gpus, device, device_id):
     global global_step
+    mel_sim_ema = [0.0, 0]
     try:
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval")) if rank == 0 else None
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
@@ -279,6 +280,7 @@ def run(hps, rank, n_gpus, device, device_id):
                 train_loader,
                 writer_eval,
                 fn_mel_loss,
+                mel_sim_ema,
                 device,
                 device_id,
             )
@@ -290,7 +292,7 @@ def run(hps, rank, n_gpus, device, device_id):
             dist.destroy_process_group()
 
 
-def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval, fn_mel_loss, device, device_id):
+def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval, fn_mel_loss, mel_sim_ema, device, device_id):
     global global_step
 
     net_g, net_d = nets
@@ -356,7 +358,15 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             hps.data.mel_fmin,
             hps.data.mel_fmax,
         )
+
         mel_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel)
+        if mel_sim_ema is not None:
+            smoothing = 0.987
+            mel_sim_ema[1] += 1
+            mel_sim_ema[0] = mel_sim_ema[0] * smoothing + mel_similarity.item() * (1 - smoothing)
+            mel_sim_display = mel_sim_ema[0] / (1 - smoothing ** mel_sim_ema[1])
+        else:
+            mel_sim_display = mel_similarity.item()
 
         scalar_dict = {
             "grad/norm_d": grad_norm_d,
@@ -385,7 +395,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             f"{epoch_recorder.record()} - {hps.model_name} | "
             f"Эпоха: {epoch}/{hps.total_epoch} | "
             f"Шаг: {global_step} | "
-            f"Сходство mel (G/R): {mel_similarity:.2f}%",
+            f"Сходство mel: {mel_sim_display:.2f}%",
             flush=True,
         )
 
