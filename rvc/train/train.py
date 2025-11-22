@@ -158,8 +158,9 @@ def main():
 
 def run(hps, rank, n_gpus, device, device_id):
     global global_step
-    mel_sim_ema = [0.0, 0]
     try:
+        metrics_ema = {} if rank == 0 else None
+        best_metrics = {"metrics/mel_sim": {"value": -float('inf'), "epoch": 0}} if rank == 0 else None
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval")) if rank == 0 else None
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=hps.data.sample_rate)
 
@@ -186,7 +187,7 @@ def run(hps, rank, n_gpus, device, device_id):
         )
         train_loader = DataLoader(
             train_dataset,
-            num_workers=2,  # 4
+            num_workers=2,
             shuffle=False,
             pin_memory=True,
             collate_fn=collate_fn,
@@ -266,6 +267,47 @@ def run(hps, rank, n_gpus, device, device_id):
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
                 d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=True)["model"])
 
+        # Пересчёт EMA и лучших значений из TensorBoard
+        if loaded and rank == 0:
+            try:
+                from tensorboard.backend.event_processing import event_accumulator
+                ea = event_accumulator.EventAccumulator(os.path.join(hps.model_dir, "eval"), size_guidance={'scalars': 0})
+                ea.Reload()
+
+                if ea.Tags().get('scalars'):
+                    print(f"\nСинхронизация метрик из TensorBoard...", flush=True)
+                    for tag in ea.Tags()['scalars']:
+                        events = ea.Scalars(tag)
+                        if not events:
+                            continue
+
+                        step_values = {e.step: float(e.value) for e in events if e.step < epoch_str}
+                        sorted_steps = sorted(step_values.keys())
+
+                        smoothing, ema_n, ema_d = 0.987, 0.0, 0.0
+                        for step in sorted_steps:
+                            val = step_values[step]
+                            ema_n = ema_n * smoothing + val * (1.0 - smoothing)
+                            ema_d = ema_d * smoothing + (1.0 - smoothing)
+                            current = ema_n / ema_d
+                            if tag == "metrics/mel_sim" and current >= best_metrics["metrics/mel_sim"]["value"]:
+                                best_metrics["metrics/mel_sim"] = {"value": current, "epoch": step}
+
+                        if sorted_steps:
+                            metrics_ema[tag] = current
+
+                curr_mel = metrics_ema.get('metrics/mel_sim', 0.0)
+                best_val = best_metrics['metrics/mel_sim']['value']
+                best_ep = best_metrics['metrics/mel_sim']['epoch']
+
+                if best_val == -float('inf'):
+                    best_val, best_ep = 0.0, 0
+
+                print(f"Last Mel: {curr_mel:.2f}% | Best Mel: {best_val:.2f}% (на эпохе {best_ep})", flush=True)
+
+            except Exception as e:
+                print(f"Ошибка чтения TensorBoard: {e}", flush=True)
+
         scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
         scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
@@ -280,9 +322,10 @@ def run(hps, rank, n_gpus, device, device_id):
                 train_loader,
                 writer_eval,
                 fn_mel_loss,
-                mel_sim_ema,
                 device,
                 device_id,
+                metrics_ema,
+                best_metrics,
             )
             scheduler_g.step()
             scheduler_d.step()
@@ -292,7 +335,7 @@ def run(hps, rank, n_gpus, device, device_id):
             dist.destroy_process_group()
 
 
-def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval, fn_mel_loss, mel_sim_ema, device, device_id):
+def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval, fn_mel_loss, device, device_id, metrics_ema=None, best_metrics=None):
     global global_step
 
     net_g, net_d = nets
@@ -302,7 +345,20 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
     net_g.train()
     net_d.train()
 
+    def smooth(key, value, smoothing=0.987):
+        """Сглаживание метрики с EMA"""
+        if metrics_ema is None:
+            return value
+
+        v = float(value)
+        metrics_ema[key] = v if key not in metrics_ema else metrics_ema[key] * smoothing + v * (1.0 - smoothing)
+        return metrics_ema[key]
+
     epoch_recorder = EpochRecorder()
+    
+    loss_disc = loss_gen = loss_fm = loss_mel = loss_kl = loss_gen_all = 0
+    grad_norm_d = grad_norm_g = 0
+    
     for _, info in enumerate(train_loader):
         if device.type == "cuda":
             info = [tensor.cuda(device_id, non_blocking=True) for tensor in info]
@@ -315,7 +371,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
         wave = slice_segments(wave, ids_slice * hps.data.hop_length, hps.train.segment_size, dim=3)
 
         # Discriminator loss
-        for _ in range(1):  # default x1
+        for _ in range(1):
             y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
             loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
             optim_d.zero_grad()
@@ -324,7 +380,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             optim_d.step()
 
         # Generator loss
-        for _ in range(1):  # default x1
+        for _ in range(1):
             _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
             loss_mel = fn_mel_loss(wave, y_hat) * hps.train.c_mel / 3.0
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
@@ -358,15 +414,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             hps.data.mel_fmin,
             hps.data.mel_fmax,
         )
-
         mel_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel)
-        if mel_sim_ema is not None:
-            smoothing = 0.987
-            mel_sim_ema[1] += 1
-            mel_sim_ema[0] = mel_sim_ema[0] * smoothing + mel_similarity.item() * (1 - smoothing)
-            mel_sim_display = mel_sim_ema[0] / (1 - smoothing ** mel_sim_ema[1])
-        else:
-            mel_sim_display = mel_similarity.item()
 
         scalar_dict = {
             "grad/norm_d": grad_norm_d,
@@ -378,8 +426,6 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             "loss/g/kl": loss_kl,
             "loss/g/total": loss_gen_all,
             "metrics/mel_sim": mel_similarity,
-            "metrics/mse_wave": F.mse_loss(y_hat, wave),
-            "metrics/mse_pitch": F.mse_loss(pitchf, pitch),
         }
         image_dict = {
             "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
@@ -390,15 +436,34 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
         for k, v in image_dict.items():
             writer_eval.add_image(k, v, epoch, dataformats="HWC")
 
+        # Применяем сглаживание
+        smoothed_dict = {k: smooth(k, v) for k, v in scalar_dict.items()}
+
+        # Обновление лучших значений (сглаженных)
+        if best_metrics is not None:
+            current_mel = smoothed_dict.get("metrics/mel_sim", 0.0)
+            if current_mel >= best_metrics["metrics/mel_sim"]["value"]:
+                best_metrics["metrics/mel_sim"] = {"value": current_mel, "epoch": epoch}
+
     if rank == 0:
+        mel_sim_display = metrics_ema.get("metrics/mel_sim", 0.0) if metrics_ema else 0.0
+        
+        best_val = best_metrics['metrics/mel_sim']['value']
+        best_ep = best_metrics['metrics/mel_sim']['epoch']
+
+        warning_msg = ""
+        if best_val > 0 and (epoch - best_ep) > 20:
+            warning_msg = "[Возможна перетренировка]"
+
         print(
-            f"{epoch_recorder.record()} - {hps.model_name} | "
-            f"Эпоха: {epoch}/{hps.total_epoch} | "
-            f"Шаг: {global_step} | "
-            f"Сходство mel: {mel_sim_display:.2f}%",
+            f"{epoch_recorder.record()}: {hps.model_name} ▸ "
+            f"Эпоха {epoch}/{hps.total_epoch} (Шаг {global_step}) ││ "
+            f"Mel: {mel_sim_display:.2f}% ▸ Рекорд: {best_val:.2f}% (Эпоха {best_ep}) "
+            f"\033[93m{warning_msg}\033[0m",
             flush=True,
         )
 
+    if rank == 0:
         save_final = epoch >= hps.total_epoch
         save_checkpoint_cond = (epoch % hps.save_every_epoch == 0) or save_final
 
@@ -429,7 +494,8 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
                 with zipfile.ZipFile(zip_filename, "w") as zipf:
                     for ext in (".pth", ".index"):
                         file_path = os.path.join(hps.model_dir, f"{hps.model_name}{ext}")
-                        zipf.write(file_path, os.path.basename(file_path))
+                        if os.path.exists(file_path):
+                            zipf.write(file_path, os.path.basename(file_path))
                 print(f"Файлы модели заархивированы в `{zip_filename}`", flush=True)
 
             print("\nОбучение успешно завершено!", flush=True)
