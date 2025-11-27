@@ -1,6 +1,7 @@
 import math
 from typing import Optional
 
+import numpy as np
 import torch
 from torch.nn.utils import remove_weight_norm
 from torch.nn.utils.parametrizations import weight_norm
