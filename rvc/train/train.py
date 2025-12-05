@@ -259,13 +259,21 @@ def run(hps, rank, n_gpus, device, device_id):
                 if rank == 0:
                     print(f"Загрузка претрейна '{hps.pretrain_g}'", flush=True)
                 g_model = net_g.module if hasattr(net_g, "module") else net_g
-                g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=True)["model"])
+                try:
+                    g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=True)["model"])
+                except:
+                    print(f"Претрейн '{hps.pretrain_g}' не смог загрузить свои веса в безопасном режиме.\nЗагрузка грязным методом...")
+                    g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=False)["model"])
 
             if hps.pretrain_d not in ("", "None", None):
                 if rank == 0:
                     print(f"Загрузка претрейна '{hps.pretrain_d}'", flush=True)
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
-                d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=True)["model"])
+                try:
+                    d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=True)["model"])
+                except:
+                    print(f"Претрейн '{hps.pretrain_d}' не смог загрузить свои веса в безопасном режиме.\nЗагрузка грязным методом...")
+                    d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=False)["model"])
 
         # Пересчёт EMA и лучших значений из TensorBoard
         if loaded and rank == 0:
