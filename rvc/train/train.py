@@ -69,6 +69,7 @@ def get_hparams():
     parser.add_argument("--gpus", type=str, default="0")
     parser.add_argument("--save_to_zip", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
     parser.add_argument("--save_backup", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
+    parser.add_argument("--exp_optim", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
     args = parser.parse_args()
 
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
@@ -93,6 +94,7 @@ def get_hparams():
     hparams.gpus = args.gpus
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
+    hparams.exp_optim = args.exp_optim
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
     print(" \n\nПАРАМЕТРЫ ОБУЧЕНИЯ ")
     print("="*70)
@@ -110,6 +112,7 @@ def get_hparams():
     print(f"{'GPU:':<25} {hparams.gpus}")
     print(f"{'Сохранение в ZIP:':<25} {'Да' if hparams.save_to_zip else 'Нет'}")
     print(f"{'Резервное копирование:':<25} {'Да' if hparams.save_backup else 'Нет'}")
+    print(f"{'Экспериментальный оптимизатор:':<25} {'Да' if hparams.exp_optim else 'Нет'}")
     print("="*70 + "\n")
     return hparams
 
@@ -213,18 +216,13 @@ def run(hps, rank, n_gpus, device, device_id):
             net_g = net_g.to(device)
             net_d = net_d.to(device)
 
-        optim_g = torch.optim.AdamW(
-            net_g.parameters(),
-            hps.train.learning_rate,
-            betas=hps.train.betas,
-            eps=hps.train.eps,
-        )
-        optim_d = torch.optim.AdamW(
-            net_d.parameters(),
-            hps.train.learning_rate,
-            betas=hps.train.betas,
-            eps=hps.train.eps,
-        )
+        if hps.exp_optim:
+            from rvc.train.utils.optimizers.AdaBelief import AdaBelief
+            optim_g = AdaBelief(net_g.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
+            optim_d = AdaBelief(net_d.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
+        else:
+            optim_g = torch.optim.AdamW(net_g.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
+            optim_d = torch.optim.AdamW(net_d.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
 
         if n_gpus > 1 and device.type == "cuda":
             net_g = DDP(net_g, device_ids=[device_id])
@@ -316,8 +314,12 @@ def run(hps, rank, n_gpus, device, device_id):
             except Exception as e:
                 print(f"Ошибка чтения TensorBoard: {e}", flush=True)
 
-        scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
-        scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
+        if hps.exp_optim:
+            scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
+            scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
+        else:
+            scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
+            scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
         print("\nЗапуск процесса обучения модели...", flush=True)
         for epoch in range(epoch_str, hps.total_epoch + 1):
