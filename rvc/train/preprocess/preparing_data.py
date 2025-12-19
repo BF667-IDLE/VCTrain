@@ -20,10 +20,11 @@ sys.path.append(os.getcwd())
 
 from rvc.lib.audio import load_audio
 from rvc.lib.rmvpe import RMVPE
+# from rvc.lib.hpa_rmvpe import HPA_RMVPE
 
 exp_dir = str(sys.argv[1])  # Директория с данными, подготовленными скриптом `preprocess.py`
 arch_fairseq = str(sys.argv[2])  # Архитектура Fairseq / Fairseq, Fairseq2
-f0_method = str(sys.argv[3])  # Метод извлечения F0 / rmvpe, rmvpe+
+f0_method = str(sys.argv[3])  # Метод извлечения F0 / rmvpe, rmvpe+, hpa-rmvpe
 sample_rate = int(sys.argv[4])  # Частота дискретизации для генерации filelist.txt
 include_mutes = int(sys.argv[5])  # Количество мьют файлов на одного спикера / По умолчанию = 2
 
@@ -43,6 +44,7 @@ class DataPreprocessor:
 
         # Инициализация моделей
         self.model_rmvpe = RMVPE(os.path.join(os.getcwd(), "rvc", "models", "predictors", "rmvpe.pt"), "cuda")
+        # self.model_hpa_rmvpe = HPA_RMVPE(os.path.join(os.getcwd(), "rvc", "models", "predictors", "hpa-rmvpe.pt"), "cuda", True)
         self.hubert_model = self._load_hubert_model(arch_fairseq)
 
     def _load_hubert_model(self, arch_fairseq):
@@ -71,6 +73,8 @@ class DataPreprocessor:
             return self.model_rmvpe.infer_from_audio(audio, 0.03)
         elif f0_method == "rmvpe+":
             return self.model_rmvpe.infer_from_audio_modified(audio, 0.02)
+        # elif f0_method == "hpa-rmvpe":
+        #     return self.model_hpa_rmvpe.infer_from_audio(audio, 0.03)
 
     def coarse_f0(self, f0):
         """Квантование F0"""
