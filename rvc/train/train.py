@@ -64,12 +64,12 @@ def get_hparams():
     parser.add_argument("--batch_size", type=int, choices=range(1, 51), default=8)
     parser.add_argument("--sample_rate", type=int, choices=[32000, 40000, 48000], default=40000)
     parser.add_argument("--vocoder", type=str, choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"], default="HiFi-GAN")
+    parser.add_argument("--optimizer", type=str, choices=["AdamW", "AdaBelief", "AdaBeliefV2"], default="AdamW")
     parser.add_argument("--pretrain_g", type=str, default=None)
     parser.add_argument("--pretrain_d", type=str, default=None)
     parser.add_argument("--gpus", type=str, default="0")
     parser.add_argument("--save_to_zip", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
     parser.add_argument("--save_backup", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
-    parser.add_argument("--exp_optim", type=lambda x: bool(strtobool(x)), choices=[True, False], default=False)
     args = parser.parse_args()
 
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
@@ -89,12 +89,12 @@ def get_hparams():
     hparams.total_epoch = args.total_epoch
     hparams.save_every_epoch = args.save_every_epoch
     hparams.batch_size = args.batch_size
+    hparams.optimizer = args.optimizer
     hparams.pretrain_g = args.pretrain_g
     hparams.pretrain_d = args.pretrain_d
     hparams.gpus = args.gpus
     hparams.save_to_zip = args.save_to_zip
     hparams.save_backup = args.save_backup
-    hparams.exp_optim = args.exp_optim
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
     print(" \n\nПАРАМЕТРЫ ОБУЧЕНИЯ ")
     print("="*70)
@@ -105,6 +105,7 @@ def get_hparams():
     print(f"{'Размер батча:':<30} {hparams.batch_size}")
     print(f"{'Частота дискретизации:':<30} {hparams.data.sample_rate} Hz")
     print(f"{'Вокодер:':<30} {hparams.model.vocoder}")
+    print(f"{'Оптимизатор:':<30} {hparams.optimizer}")
     if args.pretrain_g:
         print(f"{'Pretrain G:':<30} {hparams.pretrain_g}")
     if args.pretrain_d:
@@ -112,7 +113,6 @@ def get_hparams():
     print(f"{'GPU:':<30} {hparams.gpus}")
     print(f"{'Сохранение в ZIP:':<30} {'Да' if hparams.save_to_zip else 'Нет'}")
     print(f"{'Резервное копирование:':<30} {'Да' if hparams.save_backup else 'Нет'}")
-    print(f"{'Экспериментальный оптимизатор:':<30} {'Да' if hparams.exp_optim else 'Нет'}")
     print("="*70 + "\n")
     return hparams
 
@@ -216,10 +216,14 @@ def run(hps, rank, n_gpus, device, device_id):
             net_g = net_g.to(device)
             net_d = net_d.to(device)
 
-        if hps.exp_optim:
+        if hps.optimizer == "AdaBelief":
             from rvc.train.utils.optimizers.AdaBelief import AdaBelief
             optim_g = AdaBelief(net_g.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
             optim_d = AdaBelief(net_d.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
+        elif hps.optimizer == "AdaBeliefV2":
+            from rvc.train.utils.optimizers.AdaBeliefV2 import AdaBeliefV2
+            optim_g = AdaBeliefV2(net_g.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
+            optim_d = AdaBeliefV2(net_d.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
         else:
             optim_g = torch.optim.AdamW(net_g.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
             optim_d = torch.optim.AdamW(net_d.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
@@ -314,7 +318,7 @@ def run(hps, rank, n_gpus, device, device_id):
             except Exception as e:
                 print(f"Ошибка чтения TensorBoard: {e}", flush=True)
 
-        if hps.exp_optim:
+        if hps.optimizer in ("AdaBelief", "AdaBeliefV2"):
             scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
             scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
         else:
