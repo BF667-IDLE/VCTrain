@@ -221,7 +221,7 @@ def run(hps, rank, n_gpus, device, device_id):
             optim_g = AdaBelief(net_g.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
             optim_d = AdaBelief(net_d.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
         elif hps.optimizer == "AdaBeliefV2":
-            from rvc.train.utils.optimizers.AdaBeliefV2 import AdaBeliefV2
+            from rvc.train.utils.optimizers.AdaBeliefV2 import AdaBeliefV2, get_inverse_sqrt_scheduler
             optim_g = AdaBeliefV2(net_g.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
             optim_d = AdaBeliefV2(net_d.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
         else:
@@ -318,9 +318,12 @@ def run(hps, rank, n_gpus, device, device_id):
             except Exception as e:
                 print(f"Ошибка чтения TensorBoard: {e}", flush=True)
 
-        if hps.optimizer in ("AdaBelief", "AdaBeliefV2"):
+        if hps.optimizer == "AdaBelief":
             scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
             scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
+        elif hps.optimizer == "AdaBeliefV2":
+            scheduler_g = get_inverse_sqrt_scheduler(optim_g, warmup_epochs=10, last_epoch=epoch_str - 2)
+            scheduler_d = get_inverse_sqrt_scheduler(optim_d, warmup_epochs=10, last_epoch=epoch_str - 2)
         else:
             scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
             scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
