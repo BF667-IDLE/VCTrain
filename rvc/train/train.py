@@ -443,6 +443,8 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             "loss/g/kl": loss_kl,
             "loss/g/total": loss_gen_all,
             "metrics/mel_sim": mel_similarity,
+            "Learning Rate/G": optim_g.param_groups[0]['lr'],
+            "Learning Rate/D": optim_d.param_groups[0]['lr'],
         }
         image_dict = {
             "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
