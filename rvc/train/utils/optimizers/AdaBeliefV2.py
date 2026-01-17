@@ -231,16 +231,16 @@ class AdaBeliefV2(Optimizer):
         torch._foreach_addcdiv_(params_with_grad, exp_avgs, denom, value=-step_size)
 
 
-def get_inverse_sqrt_scheduler(optimizer, warmup_epochs=15):
+def get_inverse_sqrt_scheduler(optimizer, warmup_epochs=15, last_epoch=-1):
     """
     Возвращает готовый планировщик типа "Inverse Square Root" (Noam Decay).
     
     Args:
-        optimizer: Ваш оптимизатор (AdaBelief или другой).
+        optimizer: Оптимизатор (AdaBelief или другой).
         warmup_epochs: Количество эпох для разогрева (линейный рост LR).
     """
     def lr_lambda(current_step):
-        # current_step соответствует эпохе (т.к. scheduler.step вызывается раз в эпоху)
+        # current_step соответствует эпохе
         ep = current_step + 1 
         
         if ep < warmup_epochs:
@@ -250,4 +250,4 @@ def get_inverse_sqrt_scheduler(optimizer, warmup_epochs=15):
         # Формула плавного вечного затухания
         return (warmup_epochs ** 0.5) / (ep ** 0.5)
 
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
