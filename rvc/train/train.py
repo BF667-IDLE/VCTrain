@@ -62,7 +62,7 @@ def get_hparams():
     parser.add_argument("--total_epoch", type=int, choices=range(1, 10001), default=300)
     parser.add_argument("--save_every_epoch", type=int, choices=range(1, 101), default=25)
     parser.add_argument("--batch_size", type=int, choices=range(1, 51), default=8)
-    parser.add_argument("--sample_rate", type=int, choices=[32000, 40000, 48000], default=40000)
+    parser.add_argument("--sample_rate", type=int, choices=[32000, 40000, 48000], default=48000)
     parser.add_argument("--vocoder", type=str, choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"], default="HiFi-GAN")
     parser.add_argument("--optimizer", type=str, choices=["AdamW", "AdaBelief", "AdaBeliefV2"], default="AdamW")
     parser.add_argument("--pretrain_g", type=str, default=None)
