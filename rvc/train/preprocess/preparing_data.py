@@ -184,17 +184,13 @@ def generate_filelist(model_path: str, sample_rate: int, include_mutes: int = 2)
 
     names = gt_wavs_files & feature_files & f0_files & f0nsf_files
 
-    sids = []
     options = []
     for name in names:
-        sid = name.split("_")[0]
-        if sid not in sids:
-            sids.append(sid)
         options.append(
             f"{os.path.join(gt_wavs_dir, name)}.wav|"
             f"{os.path.join(feature_dir, name)}.npy|"
             f"{os.path.join(f0_dir, name)}.wav.npy|"
-            f"{os.path.join(f0nsf_dir, name)}.wav.npy|{sid}"
+            f"{os.path.join(f0nsf_dir, name)}.wav.npy|0"
         )
 
     if include_mutes > 0:
@@ -203,9 +199,8 @@ def generate_filelist(model_path: str, sample_rate: int, include_mutes: int = 2)
         mute_f0_path = os.path.join(mute_base_path, "f0_quantized", "mute.wav.npy")
         mute_f0nsf_path = os.path.join(mute_base_path, "f0_voiced", "mute.wav.npy")
 
-        # добавление (include_mutes) файлов для каждого sid
-        for sid in sids * include_mutes:
-            options.append(f"{mute_audio_path}|{mute_feature_path}|{mute_f0_path}|{mute_f0nsf_path}|{sid}")
+        for _ in range(include_mutes):
+            options.append(f"{mute_audio_path}|{mute_feature_path}|{mute_f0_path}|{mute_f0nsf_path}|0")
 
     shuffle(options)
 
