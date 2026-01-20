@@ -98,7 +98,7 @@ class PreProcess:
             self.pipeline(path, idx0)
 
     def pipeline_mp_inp_dir(self, input_root, num_processes):
-        print("Подготовка данных к обработке...")
+        print("Инициализация процесса сегментации аудиоданных...")
         try:
             # Сбор информации о файлах в директории
             infos = [(os.path.join(input_root, name), idx) for idx, name in enumerate(sorted(list(os.listdir(input_root))))]
@@ -111,7 +111,7 @@ class PreProcess:
                 p.start()
             for p in ps:
                 p.join()
-            print("Подготовка данных успешно завершена!")
+            print(f"✓ Сегментация успешно завершена!")
         except Exception:
             raise RuntimeError(f"Ошибка! {traceback.format_exc()}")
 
