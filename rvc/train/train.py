@@ -470,15 +470,10 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
         best_val = best_metrics['metrics/mel_sim']['value']
         best_ep = best_metrics['metrics/mel_sim']['epoch']
 
-        warning_msg = ""
-        if best_val > 0 and (epoch - best_ep) > 20:
-            warning_msg = "[Возможна перетренировка]"
-
         print(
             f"{epoch_recorder.record()}: {hps.model_name} ▸ "
             f"Эпоха {epoch}/{hps.total_epoch} (Шаг {global_step}) ││ "
-            f"Mel: {mel_sim_display:.2f}% ▸ Рекорд: {best_val:.2f}% (Эпоха {best_ep}) "
-            f"\033[93m{warning_msg}\033[0m",
+            f"Mel: {mel_sim_display:.2f}% ▸ Рекорд: {best_val:.2f}% (Эпоха {best_ep})",
             flush=True,
         )
 
