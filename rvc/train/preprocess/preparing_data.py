@@ -123,10 +123,10 @@ class DataPreprocessor:
         if not files:
             self._raise_no_files_error()
 
-        print(f"\nДанных, готовых к обработке - {len(files)}")
+        print(f"\nОбнаружено сегментов для извлечения признаков: {len(files)}")
 
         # Обработка файлов
-        for file in tqdm(files, desc="Извлечение тона"):
+        for file in tqdm(files, desc="Извлечение F0 (фундаментальной частоты)"):
             try:
                 inp_path = f"{inp_root}/{file}"
                 opt_path1 = f"{f0_quant_path}/{file}"
@@ -140,7 +140,7 @@ class DataPreprocessor:
             except:
                 raise RuntimeError(f"Ошибка извлечения тона!\nФайл - {inp_path}\n{traceback.format_exc()}")
 
-        for file in tqdm(files, desc="Извлечение признаков"):
+        for file in tqdm(files, desc="Извлечение семантических признаков HuBERT"):
             try:
                 wav_path = f"{inp_root}/{file}"
                 out_path = f"{features_path}/{file.replace('.wav', '.npy')}"
@@ -153,7 +153,7 @@ class DataPreprocessor:
             except:
                 raise RuntimeError(f"Ошибка извлечения признаков!\nФайл - {wav_path}\n{traceback.format_exc()}")
 
-        print("Обработка данных успешно завершена!")
+        print("✓ Извлечение акустических признаков успешно завершено!")
 
     def _raise_no_files_error(self):
         error_message = (
