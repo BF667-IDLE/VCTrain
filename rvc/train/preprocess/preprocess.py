@@ -88,7 +88,7 @@ class PreProcess:
                         self.norm_write(tmp_audio, idx0, idx1)
                         idx1 += 1
                         break
-            print(f"{path}\t-> Success")
+            print(f"{path}\t-> Готово")
         except Exception:
             raise RuntimeError(f"{path}\t-> {traceback.format_exc()}")
 
