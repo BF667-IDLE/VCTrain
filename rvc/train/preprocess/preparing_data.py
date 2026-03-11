@@ -5,7 +5,7 @@ import traceback
 import warnings
 from random import shuffle
 
-# Установка переменных окружения и отключение предупреждений
+# Environment variables setup and warning suppression
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 logging.basicConfig(level=logging.WARNING)
@@ -21,18 +21,18 @@ sys.path.append(os.getcwd())
 from rvc.lib.audio import load_audio
 from rvc.lib.rmvpe import RMVPE
 
-exp_dir = str(sys.argv[1])  # Директория с данными, подготовленными скриптом `preprocess.py`
-arch_fairseq = str(sys.argv[2])  # Архитектура Fairseq / Fairseq, Fairseq2
-f0_method = str(sys.argv[3])  # Метод извлечения F0 / rmvpe, rmvpe+, hpa-rmvpe
-sample_rate = int(sys.argv[4])  # Частота дискретизации для генерации filelist.txt
-include_mutes = int(sys.argv[5])  # Количество мьют файлов на одного спикера / По умолчанию = 2
+exp_dir = str(sys.argv[1])  # Directory with data prepared by `preprocess.py` script
+arch_fairseq = str(sys.argv[2])  # Fairseq architecture / Fairseq, Fairseq2
+f0_method = str(sys.argv[3])  # F0 extraction method / rmvpe, rmvpe+, hpa-rmvpe
+sample_rate = int(sys.argv[4])  # Sample rate for generating filelist.txt
+include_mutes = int(sys.argv[5])  # Number of mute files per speaker / Default = 2
 
 
 class DataPreprocessor:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Настройки для F0
+        # F0 settings
         self.sample_rate = 16000
         self.hop_size = 160
         self.f0_bin = 256
@@ -41,13 +41,13 @@ class DataPreprocessor:
         self.f0_mel_min = 1127 * np.log(1 + self.f0_min / 700)
         self.f0_mel_max = 1127 * np.log(1 + self.f0_max / 700)
 
-        # Инициализация моделей
+        # Model initialization
         self.model_rmvpe = RMVPE(os.path.join(os.getcwd(), "rvc", "models", "predictors", "rmvpe.pt"), self.device, hpa=False)
         self.model_hpa_rmvpe = RMVPE(os.path.join(os.getcwd(), "rvc", "models", "predictors", "hpa-rmvpe.pt"), self.device, hpa=True)
         self.hubert_model = self._load_hubert_model(arch_fairseq)
 
     def _load_hubert_model(self, arch_fairseq):
-        """Загрузка модели HuBERT"""
+        """Load HuBERT model"""
         hubert_model_path = os.path.join(os.getcwd(), "rvc", "models", "embedders", "contentvec_base.pt")
         if arch_fairseq == "Fairseq":
             from fairseq.checkpoint_utils import load_model_ensemble_and_task
@@ -62,10 +62,10 @@ class DataPreprocessor:
             model = load_model(hubert_model_path)
             return model.to(self.device).eval()
         else:
-            raise ValueError("Неизвестное значение для 'arch_fairseq'! Доступные варианты: 'Fairseq', 'Fairseq2'.")
+            raise ValueError("Unknown value for 'arch_fairseq'! Available options: 'Fairseq', 'Fairseq2'.")
 
     def compute_f0(self, path, f0_method):
-        """Вычисление F0"""
+        """Compute F0"""
         audio = load_audio(path, self.sample_rate)
         if f0_method == "rmvpe":
             return self.model_rmvpe.infer_from_audio(audio, 0.03)
@@ -73,10 +73,10 @@ class DataPreprocessor:
             return self.model_rmvpe.infer_from_audio_medfilt(audio, 0.02)
         if f0_method == "hpa-rmvpe":
             return self.model_hpa_rmvpe.infer_from_audio(audio, 0.03)
-        raise ValueError("Неизвестное значение для 'f0_method'! Доступные варианты: 'rmvpe', 'rmvpe+' и 'hpa-rmvpe'.")
+        raise ValueError("Unknown value for 'f0_method'! Available options: 'rmvpe', 'rmvpe+' and 'hpa-rmvpe'.")
 
     def coarse_f0(self, f0):
-        """Квантование F0"""
+        """Quantize F0"""
         f0_mel = 1127 * np.log(1 + f0 / 700)
         f0_mel[f0_mel > 0] = (f0_mel[f0_mel > 0] - self.f0_mel_min) * (self.f0_bin - 2) / (self.f0_mel_max - self.f0_mel_min) + 1
         f0_mel[f0_mel <= 1] = 1
@@ -86,7 +86,7 @@ class DataPreprocessor:
         return f0_coarse
 
     def read_wave(self, wav_path):
-        """Чтение аудиофайла"""
+        """Read audio file"""
         wav, sr = sf.read(wav_path)
         assert sr == 16000
         feats = torch.from_numpy(wav).float()
@@ -96,7 +96,7 @@ class DataPreprocessor:
         return feats.view(1, -1)
 
     def extract_features(self, wav_path):
-        """Извлечение признаков HuBERT"""
+        """Extract HuBERT features"""
         feats = self.read_wave(wav_path).to(self.device)
         padding_mask = torch.BoolTensor(feats.shape).fill_(False).to(self.device)
 
@@ -105,8 +105,8 @@ class DataPreprocessor:
             return logits[0].squeeze(0).float().cpu().numpy()
 
     def process_files(self):
-        """Основной метод обработки файлов"""
-        # Подготовка путей
+        """Main file processing method"""
+        # Prepare paths
         inp_root = f"{exp_dir}/data/sliced_audios_16k"
         f0_quant_path = f"{exp_dir}/data/f0_quantized"
         f0_voiced_path = f"{exp_dir}/data/f0_voiced"
@@ -116,15 +116,15 @@ class DataPreprocessor:
         os.makedirs(f0_voiced_path, exist_ok=True)
         os.makedirs(features_path, exist_ok=True)
 
-        # Сбор файлов для обработки
+        # Collect files for processing
         files = sorted([f for f in os.listdir(inp_root) if f.endswith(".wav") and "spec" not in f])
         if not files:
             self._raise_no_files_error()
 
-        print(f"\nОбнаружено сегментов для извлечения признаков: {len(files)}")
+        print(f"\nSegments found for feature extraction: {len(files)}")
 
-        # Обработка файлов
-        for file in tqdm(files, desc="Извлечение F0 (фундаментальной частоты)"):
+        # Process files
+        for file in tqdm(files, desc="Extracting F0 (fundamental frequency)"):
             try:
                 inp_path = f"{inp_root}/{file}"
                 opt_path1 = f"{f0_quant_path}/{file}"
@@ -136,9 +136,9 @@ class DataPreprocessor:
                     coarse_pit = self.coarse_f0(featur_pit)
                     np.save(opt_path1, coarse_pit, allow_pickle=False)
             except:
-                raise RuntimeError(f"Ошибка извлечения тона!\nФайл - {inp_path}\n{traceback.format_exc()}")
+                raise RuntimeError(f"Pitch extraction error!\nFile - {inp_path}\n{traceback.format_exc()}")
 
-        for file in tqdm(files, desc="Извлечение семантических признаков HuBERT"):
+        for file in tqdm(files, desc="Extracting HuBERT semantic features"):
             try:
                 wav_path = f"{inp_root}/{file}"
                 out_path = f"{features_path}/{file.replace('.wav', '.npy')}"
@@ -146,22 +146,22 @@ class DataPreprocessor:
                 if not os.path.exists(out_path):
                     feats = self.extract_features(wav_path)
                     if np.isnan(feats).sum() > 0:
-                        raise TypeError(f"Файл {file} содержит некорректные значения (NaN).")
+                        raise TypeError(f"File {file} contains invalid values (NaN).")
                     np.save(out_path, feats, allow_pickle=False)
             except:
-                raise RuntimeError(f"Ошибка извлечения признаков!\nФайл - {wav_path}\n{traceback.format_exc()}")
+                raise RuntimeError(f"Feature extraction error!\nFile - {wav_path}\n{traceback.format_exc()}")
 
-        print("✓ Извлечение акустических признаков успешно завершено!")
+        print("✓ Acoustic feature extraction completed successfully!")
 
     def _raise_no_files_error(self):
         error_message = (
-            "ОШИБКА: Не найдено ни одного фрагмента для обработки.\n"
-            "Возможные причины:\n"
-            "1. Датасет не имеет звука.\n"
-            "2. Датасет слишком тихий.\n"
-            "3. Датасет слишком короткий (менее 3 секунд).\n"
-            "4. Датасет слишком длинный (более 1 часа одним файлом).\n\n"
-            "Попробуйте увеличить громкость или объем датасета. Если у вас один большой файл, можно разделить его на несколько более мелких."
+            "ERROR: No segments found for processing.\n"
+            "Possible reasons:\n"
+            "1. Dataset has no audio.\n"
+            "2. Dataset is too quiet.\n"
+            "3. Dataset is too short (less than 3 seconds).\n"
+            "4. Dataset is too long (more than 1 hour as a single file).\n\n"
+            "Try increasing the volume or dataset size. If you have one large file, you can split it into several smaller ones."
         )
         raise FileNotFoundError(error_message)
 
@@ -212,6 +212,6 @@ if __name__ == "__main__":
 
         generate_filelist(exp_dir, sample_rate, include_mutes)
     except Exception as e:
-        print(f"Критическая ошибка: {str(e)}")
+        print(f"Critical error: {str(e)}")
         print(traceback.format_exc())
         sys.exit(1)
