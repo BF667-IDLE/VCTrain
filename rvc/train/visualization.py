@@ -5,12 +5,12 @@ from matplotlib.colors import Normalize
 
 
 def plot_spectrogram_to_numpy(spectrogram, figsize=(10, 4), cmap="viridis"):
-    """Визуализация Mel-спектрограммы."""
+    """Visualize Mel-spectrogram."""
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(spectrogram, aspect="auto", origin="lower", cmap=cmap, norm=Normalize(vmin=-10, vmax=0))
     plt.colorbar(im, ax=ax, format="%+2.0f dB")
-    plt.xlabel("Кадры")
-    plt.ylabel("Частотные каналы")
+    plt.xlabel("Frames")
+    plt.ylabel("Frequency channels")
     plt.tight_layout()
 
     fig.canvas.draw()
@@ -21,7 +21,7 @@ def plot_spectrogram_to_numpy(spectrogram, figsize=(10, 4), cmap="viridis"):
 
 
 def mel_spectrogram_similarity(y_hat_mel, y_mel):
-    """Сходство между сгенерированной и реальной мел-спектрограммами"""
+    """Similarity between generated and real mel-spectrograms"""
     device = y_hat_mel.device
     y_mel = y_mel.to(device)
 
