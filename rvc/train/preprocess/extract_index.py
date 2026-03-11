@@ -10,7 +10,7 @@ exp_dir = str(sys.argv[1])
 index_algorithm = str(sys.argv[2])
 
 try:
-    print(f"\nЗапуск процесса генерации индекса...")
+    print(f"\nStarting index generation process...")
     feature_dir = os.path.join(exp_dir, "data", "features")
     model_name = os.path.basename(exp_dir)
 
@@ -59,9 +59,9 @@ try:
             index_added.add(big_npy[i : i + batch_size_add])
 
         faiss.write_index(index_added, index_filepath)
-        print(f"Индекс успешно сохранен - '{index_filepath}'")
+        print(f"Index successfully saved - '{index_filepath}'")
 
 except Exception as error:
-    print(f"Произошла ошибка при извлечении индекса: {error}")
-    print("Если вы запускаете этот код в виртуальной среде, убедитесь, что у вас достаточно GPU для генерации файла индекса.")
+    print(f"An error occurred during index extraction: {error}")
+    print("If you are running this code in a virtual environment, make sure you have enough GPU to generate the index file.")
     sys.exit(1)
