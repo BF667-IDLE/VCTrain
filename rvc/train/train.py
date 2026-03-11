@@ -3,11 +3,11 @@ import os
 import sys
 import warnings
 
-# Настройка окружения
+# Environment setup
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
 
-# Настройка логирования и подавление предупреждений
+# Logging setup and warning suppression
 logging.basicConfig(level=logging.WARNING)
 warnings.filterwarnings("ignore")
 
@@ -37,6 +37,7 @@ from rvc.train.mel_processing import MultiScaleMelSpectrogramLoss, mel_spectrogr
 from rvc.train.utils.data_utils import DistributedBucketSampler, TextAudioCollateMultiNSFsid, TextAudioLoaderMultiNSFsid
 from rvc.train.utils.train_utils import HParams, extract_model, load_checkpoint, save_checkpoint
 from rvc.train.visualization import mel_spectrogram_similarity, plot_spectrogram_to_numpy
+from rvc.train.utils.optimizers.Adafactor import Adafactor  # Added Adafactor import
 
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = True
@@ -63,7 +64,7 @@ def get_hparams():
     parser.add_argument("--batch_size", type=int, choices=range(1, 129), default=8)
     parser.add_argument("--sample_rate", type=int, choices=[32000, 40000, 48000], default=48000)
     parser.add_argument("--vocoder", type=str, choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"], default="HiFi-GAN")
-    parser.add_argument("--optimizer", type=str, choices=["AdamW", "AdaBelief", "AdaBeliefV2"], default="AdamW")
+    parser.add_argument("--optimizer", type=str, choices=["AdamW", "AdaBelief", "AdaBeliefV2", "Adafactor"], default="AdamW")  # Added Adafactor
     parser.add_argument("--pretrain_g", type=str, default=None)
     parser.add_argument("--pretrain_d", type=str, default=None)
     parser.add_argument("--gpus", type=str, default="0")
@@ -73,11 +74,11 @@ def get_hparams():
     experiment_dir = os.path.join(args.experiment_dir, args.model_name)
     config_save_path = os.path.join(experiment_dir, "data", "config.json")
 
-    # Генерация файла конфигурации
+    # Generate configuration file
     if not os.path.exists(config_save_path):
         generate_config(config_save_path, args.sample_rate, args.vocoder)
 
-    # Загрузка файла конфигурации
+    # Load configuration file
     with open(config_save_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
@@ -94,22 +95,22 @@ def get_hparams():
     hparams.save_to_zip = args.save_to_zip
     hparams.data.training_files = f"{experiment_dir}/data/filelist.txt"
 
-    print(" \n\nПАРАМЕТРЫ ОБУЧЕНИЯ ")
+    print(" \n\nTRAINING PARAMETERS ")
     print("="*70)
-    print(f"{'Папка сохранения:':<30} {hparams.model_dir}")
-    print(f"{'Имя модели:':<30} {hparams.model_name}")
-    print(f"{'Эпох обучения:':<30} {hparams.total_epoch}")
-    print(f"{'Сохранение каждые:':<30} {hparams.save_every_epoch} эпох")
-    print(f"{'Размер батча:':<30} {hparams.batch_size}")
-    print(f"{'Частота дискретизации:':<30} {hparams.data.sample_rate} Hz")
-    print(f"{'Вокодер:':<30} {hparams.model.vocoder}")
-    print(f"{'Оптимизатор:':<30} {hparams.optimizer}")
+    print(f"{'Save directory:':<30} {hparams.model_dir}")
+    print(f"{'Model name:':<30} {hparams.model_name}")
+    print(f"{'Training epochs:':<30} {hparams.total_epoch}")
+    print(f"{'Save every:':<30} {hparams.save_every_epoch} epochs")
+    print(f"{'Batch size:':<30} {hparams.batch_size}")
+    print(f"{'Sample rate:':<30} {hparams.data.sample_rate} Hz")
+    print(f"{'Vocoder:':<30} {hparams.model.vocoder}")
+    print(f"{'Optimizer:':<30} {hparams.optimizer}")
     if args.pretrain_g:
         print(f"{'Pretrain G:':<30} {hparams.pretrain_g}")
     if args.pretrain_d:
         print(f"{'Pretrain D:':<30} {hparams.pretrain_d}")
     print(f"{'GPU:':<30} {hparams.gpus}")
-    print(f"{'Сохранение в ZIP:':<30} {'Да' if hparams.save_to_zip else 'Нет'}")
+    print(f"{'Save to ZIP:':<30} {'Yes' if hparams.save_to_zip else 'No'}")
     print("="*70 + "\n")
     return hparams
 
@@ -139,7 +140,7 @@ def main():
     gpus = [int(item) for item in hps.gpus.split("-")] if device.type == "cuda" else [0]
     n_gpus = len(gpus)
     if device.type == "cpu":
-        print("Обучение с использованием процессора займёт много времени.", flush=True)
+        print("Training with CPU will take a long time.", flush=True)
 
     children = []
     for rank, device_id in enumerate(gpus):
@@ -214,6 +215,7 @@ def run(hps, rank, n_gpus, device, device_id):
             net_g = net_g.to(device)
             net_d = net_d.to(device)
 
+        # Optimizer setup with Adafactor
         if hps.optimizer == "AdaBelief":
             from rvc.train.utils.optimizers.AdaBelief import AdaBelief
             optim_g = AdaBelief(net_g.parameters(), lr=hps.train.learning_rate, betas=hps.train.betas, eps=1e-8)
@@ -222,6 +224,38 @@ def run(hps, rank, n_gpus, device, device_id):
             from rvc.train.utils.optimizers.AdaBeliefV2 import AdaBeliefV2, get_inverse_sqrt_scheduler
             optim_g = AdaBeliefV2(net_g.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
             optim_d = AdaBeliefV2(net_d.parameters(), lr=hps.train.learning_rate, betas=(0.9, 0.999), eps=1e-8, amsgrad=True)
+        elif hps.optimizer == "Adafactor":
+            # Adafactor configuration
+            # For relative_step=True (default), lr is None and learning rate is computed internally
+            # This is recommended for Adafactor as it's designed for adaptive learning rates
+            optim_g = Adafactor(
+                net_g.parameters(),
+                lr=None,  # Use relative step mode (recommended)
+                eps=(1e-30, 1e-3),
+                clip_threshold=1.0,
+                decay_rate=-0.8,
+                beta1=0.9,  # Add momentum for stability
+                weight_decay=0.01,  # Light weight decay
+                scale_parameter=True,
+                relative_step=True,
+                warmup_init=False,
+                foreach=True,
+                use_gc=False  # Gradient Centralization (optional)
+            )
+            optim_d = Adafactor(
+                net_d.parameters(),
+                lr=None,
+                eps=(1e-30, 1e-3),
+                clip_threshold=1.0,
+                decay_rate=-0.8,
+                beta1=0.9,
+                weight_decay=0.01,
+                scale_parameter=True,
+                relative_step=True,
+                warmup_init=False,
+                foreach=True,
+                use_gc=False
+            )
         else:
             optim_g = torch.optim.AdamW(net_g.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
             optim_d = torch.optim.AdamW(net_d.parameters(), hps.train.learning_rate, betas=hps.train.betas, eps=hps.train.eps)
@@ -230,20 +264,20 @@ def run(hps, rank, n_gpus, device, device_id):
             net_g = DDP(net_g, device_ids=[device_id])
             net_d = DDP(net_d, device_ids=[device_id])
 
-        # Загрузка чекпоинта
+        # Load checkpoint
         epoch_str = None
         checkpoint_path = os.path.join(hps.model_dir, "checkpoint.pth")
         if os.path.exists(checkpoint_path):
             try:
                 epoch_str = load_checkpoint(checkpoint_path, net_g, optim_g, net_d, optim_d)
             except Exception as e:
-                print(f"Ошибка загрузки checkpoint.pth:\n{e}", flush=True)
+                print(f"Error loading checkpoint.pth:\n{e}", flush=True)
 
         if epoch_str is not None:
             epoch_str += 1
             global_step = (epoch_str - 1) * len(train_loader)
 
-            # Пересчёт EMA и лучших значений из TensorBoard
+            # Recalculate EMA and best values from TensorBoard
             if rank == 0:
                 try:
                     from tensorboard.backend.event_processing import event_accumulator
@@ -251,7 +285,7 @@ def run(hps, rank, n_gpus, device, device_id):
                     ea.Reload()
 
                     if ea.Tags().get('scalars'):
-                        print(f"\nСинхронизация метрик из TensorBoard...", flush=True)
+                        print(f"\nSynchronizing metrics from TensorBoard...", flush=True)
                         for tag in ea.Tags()['scalars']:
                             events = ea.Scalars(tag)
                             if not events:
@@ -279,53 +313,59 @@ def run(hps, rank, n_gpus, device, device_id):
                     if best_val == -float('inf'):
                         best_val, best_ep = 0.0, 0
 
-                    print(f"Last Mel: {curr_mel:.2f}% | Best Mel: {best_val:.2f}% (на эпохе {best_ep})", flush=True)
+                    print(f"Last Mel: {curr_mel:.2f}% | Best Mel: {best_val:.2f}% (at epoch {best_ep})", flush=True)
 
                 except Exception as e:
-                    print(f"Ошибка чтения TensorBoard: {e}", flush=True)
+                    print(f"Error reading TensorBoard: {e}", flush=True)
         else:
             epoch_str = 1
             global_step = 0
 
-            # Загрузка претрейнов если чекпоинт не найден
+            # Load pretrained models if checkpoint not found
             if hps.pretrain_g not in ("", "None", None):
                 if rank == 0:
-                    print(f"Загрузка претрейна генератора: '{hps.pretrain_g}'", flush=True)
+                    print(f"Loading generator pretrain: '{hps.pretrain_g}'", flush=True)
                 g_model = net_g.module if hasattr(net_g, "module") else net_g
                 try:
                     g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=True)["model"])
                 except Exception:
-                    print("Загрузка претрейна генератора в небезопасном режиме...", flush=True)
+                    print("Loading generator pretrain in unsafe mode...", flush=True)
                     g_model.load_state_dict(torch.load(hps.pretrain_g, map_location="cpu", weights_only=False)["model"])
 
             if hps.pretrain_d not in ("", "None", None):
                 if rank == 0:
-                    print(f"Загрузка претрейна дискриминатора: '{hps.pretrain_d}'", flush=True)
+                    print(f"Loading discriminator pretrain: '{hps.pretrain_d}'", flush=True)
                 d_model = net_d.module if hasattr(net_d, "module") else net_d
                 try:
                     d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=True)["model"])
                 except Exception:
-                    print("Загрузка претрейна дискриминатора в небезопасном режиме...", flush=True)
+                    print("Loading discriminator pretrain in unsafe mode...", flush=True)
                     d_model.load_state_dict(torch.load(hps.pretrain_d, map_location="cpu", weights_only=False)["model"])
 
-        # Настройка scheduler
+        # Scheduler setup
         if hps.optimizer == "AdaBelief":
             scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
             scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=hps.total_epoch, eta_min=1e-6, last_epoch=epoch_str - 2)
         elif hps.optimizer == "AdaBeliefV2":
+            from rvc.train.utils.optimizers.AdaBeliefV2 import get_inverse_sqrt_scheduler
             scheduler_g = get_inverse_sqrt_scheduler(optim_g, warmup_epochs=10, last_epoch=epoch_str - 2)
             scheduler_d = get_inverse_sqrt_scheduler(optim_d, warmup_epochs=10, last_epoch=epoch_str - 2)
+        elif hps.optimizer == "Adafactor":
+            # Adafactor typically doesn't need a scheduler as it has adaptive learning rate internally
+            # But we'll use a simple placeholder scheduler that does nothing
+            scheduler_g = torch.optim.lr_scheduler.LambdaLR(optim_g, lr_lambda=lambda epoch: 1.0, last_epoch=epoch_str - 2)
+            scheduler_d = torch.optim.lr_scheduler.LambdaLR(optim_d, lr_lambda=lambda epoch: 1.0, last_epoch=epoch_str - 2)
         else:
             scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
             scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
-        # Проверка: не превышает ли загруженная эпоха целевую
+        # Check if loaded epoch exceeds target
         if epoch_str > hps.total_epoch:
             if rank == 0:
-                print(f"\n⚠️  Загруженный чекпоинт (эпоха {epoch_str - 1}) уже превышает указанное количество эпох ({hps.total_epoch}).", flush=True)
+                print(f"\n⚠️  Loaded checkpoint (epoch {epoch_str - 1}) already exceeds specified number of epochs ({hps.total_epoch}).", flush=True)
             return
 
-        print("\nЗапуск процесса обучения модели...", flush=True)
+        print("\nStarting model training process...", flush=True)
         epoch_recorder = EpochRecorder() if rank == 0 else None
         for epoch in range(epoch_str, hps.total_epoch + 1):
             train_and_evaluate(
@@ -346,7 +386,7 @@ def run(hps, rank, n_gpus, device, device_id):
             scheduler_g.step()
             scheduler_d.step()
     finally:
-        # Уничтожение группы процессов для корректного закрытия программы
+        # Destroy process group for proper program termination
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -365,7 +405,7 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
     grad_norm_d = grad_norm_g = 0
 
     def smooth(key, value, smoothing=0.987):
-        """Сглаживание метрики с EMA"""
+        """Smooth metric with EMA"""
         if metrics_ema is None:
             return value
 
@@ -440,8 +480,8 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             "loss/g/kl": loss_kl,
             "loss/g/total": loss_gen_all,
             "metrics/mel_sim": mel_similarity,
-            "Learning Rate/G": optim_g.param_groups[0]['lr'],
-            "Learning Rate/D": optim_d.param_groups[0]['lr'],
+            "Learning Rate/G": optim_g.param_groups[0]['lr'] if hps.optimizer != "Adafactor" else 0.0,  # Adafactor uses internal LR
+            "Learning Rate/D": optim_d.param_groups[0]['lr'] if hps.optimizer != "Adafactor" else 0.0,
         }
         image_dict = {
             "mel/slice/real": plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
@@ -452,16 +492,16 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
         for k, v in image_dict.items():
             writer_eval.add_image(k, v, epoch, dataformats="HWC")
 
-        # Применяем сглаживание
+        # Apply smoothing
         smoothed_dict = {k: smooth(k, v) for k, v in scalar_dict.items()}
 
-        # Обновление лучших значений (сглаженных)
+        # Update best values (smoothed)
         if best_metrics is not None:
             current_mel = smoothed_dict.get("metrics/mel_sim", 0.0)
             if current_mel >= best_metrics["metrics/mel_sim"]["value"]:
                 best_metrics["metrics/mel_sim"] = {"value": current_mel, "epoch": epoch}
 
-    # Вывод в консоль
+    # Console output
     if rank == 0:
         mel_sim_display = metrics_ema.get("metrics/mel_sim", 0.0) if metrics_ema else 0.0
         
@@ -470,22 +510,22 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
 
         print(
             f"{epoch_recorder.record()}: {hps.model_name} ▸ "
-            f"Эпоха {epoch}/{hps.total_epoch} (Шаг {global_step}) ││ "
-            f"Mel: {mel_sim_display:.2f}% ▸ Рекорд: {best_val:.2f}% (Эпоха {best_ep})",
+            f"Epoch {epoch}/{hps.total_epoch} (Step {global_step}) ││ "
+            f"Mel: {mel_sim_display:.2f}% ▸ Record: {best_val:.2f}% (Epoch {best_ep})",
             flush=True,
         )
 
-    # Сохранение моделей
+    # Save models
     if rank == 0:
         is_final_epoch = epoch >= hps.total_epoch
         should_save_checkpoint = (epoch % hps.save_every_epoch == 0) or is_final_epoch
 
         if should_save_checkpoint:
-            # Сохранение чекпоинта
+            # Save checkpoint
             checkpoint_path = os.path.join(hps.model_dir, "checkpoint.pth")
             save_checkpoint(net_g, optim_g, net_d, optim_d, hps.train.learning_rate, epoch, checkpoint_path)
 
-            # Сохранение промежуточной модели
+            # Save intermediate model
             weights_dir = os.path.join(hps.model_dir, "weights")
             os.makedirs(weights_dir, exist_ok=True)
 
@@ -493,28 +533,28 @@ def train_and_evaluate(hps, rank, epoch, nets, optims, train_loader, writer_eval
             intermediate_path = os.path.join(weights_dir, f"{hps.model_name}_e{epoch}_s{global_step}.pth")
             print(extract_model(hps, checkpoint_state, epoch, global_step, intermediate_path), flush=True)
 
-            # Финальная эпоха
+            # Final epoch
             if is_final_epoch:
-                # Сохранение last модели
+                # Save last model
                 last_path = os.path.join(hps.model_dir, f"{hps.model_name}_e{epoch}_s{global_step}_last.pth")
                 print(extract_model(hps, checkpoint_state, epoch, global_step, last_path), flush=True)
 
-                # Архивирование
+                # Archive
                 if hps.save_to_zip:
                     import zipfile
 
                     zip_filename = os.path.join(hps.model_dir, f"{hps.model_name}.zip")
                     with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
-                        # Добавляем last модель
+                        # Add last model
                         if os.path.exists(last_path):
                             zipf.write(last_path, os.path.basename(last_path))
-                        # Добавляем index
+                        # Add index
                         index_path = os.path.join(hps.model_dir, f"{hps.model_name}.index")
                         if os.path.exists(index_path):
                             zipf.write(index_path, os.path.basename(index_path))
-                    print(f"Файлы модели заархивированы в '{zip_filename}'", flush=True)
+                    print(f"Model files archived to '{zip_filename}'", flush=True)
 
-                print("\nОбучение успешно завершено!", flush=True)
+                print("\nTraining successfully completed!", flush=True)
 
 
 if __name__ == "__main__":
