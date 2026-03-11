@@ -9,7 +9,7 @@ EMBEDDERS = "https://huggingface.co/Politrees/RVC_resources/resolve/main/embedde
 PREDICTORS_DIR = os.path.join(os.getcwd(), "rvc", "models", "predictors")
 EMBEDDERS_DIR = os.path.join(os.getcwd(), "rvc", "models", "embedders")
 
-# Создаем папки, если их нет
+# Create folders if they don't exist
 os.makedirs(PREDICTORS_DIR, exist_ok=True)
 os.makedirs(EMBEDDERS_DIR, exist_ok=True)
 
@@ -17,16 +17,16 @@ os.makedirs(EMBEDDERS_DIR, exist_ok=True)
 def dl_model(link, model_name, dir_name):
     file_path = os.path.join(dir_name, model_name)
     if os.path.exists(file_path):
-        return  # Пропускаем загрузку, если файл уже существует
+        return  # Skip download if file already exists
 
     r = requests.get(f"{link}{model_name}", stream=True)
     r.raise_for_status()
 
-    # Получаем общий размер файла
+    # Get total file size
     total_size = int(r.headers.get("content-length", 0))
-    # Используем tqdm для отображения прогресса
+    # Use tqdm to display progress
     with open(file_path, "wb") as f, tqdm(
-        desc=f"Установка {model_name}",
+        desc=f"Installing {model_name}",
         total=total_size,
         unit="iB",
         unit_scale=True,
@@ -55,9 +55,9 @@ def check_and_install_models():
             dl_model(EMBEDDERS, model, EMBEDDERS_DIR)
 
     except requests.exceptions.RequestException as e:
-        print(f"Произошла ошибка при загрузке модели: {e}")
+        print(f"An error occurred while downloading the model: {e}")
     except Exception as e:
-        print(f"Произошла непредвиденная ошибка: {e}")
+        print(f"An unexpected error occurred: {e}")
 
 
 if __name__ == "__main__":
