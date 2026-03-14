@@ -11,6 +11,6 @@ def load_audio(file, sample_rate):
         if sr != sample_rate:
             audio = librosa.resample(audio, orig_sr=sr, target_sr=sample_rate, res_type="soxr_vhq")
     except Exception as error:
-        raise RuntimeError(f"Возникла ошибка при загрузке аудио: {error}")
+        raise RuntimeError(f"Error occurred while loading audio: {error}")
 
     return audio.flatten()
