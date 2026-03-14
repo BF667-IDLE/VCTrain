@@ -28,7 +28,7 @@ matplotlib==3.10.1
 matplotlib-inline==0.1.7
 pydantic==2.8.2
 pydantic_core==2.20.1
-gradio==4.44.1
+gradio==4.36.0
 gradio_client==1.0.1
 
 # Machine learning and deep learning
