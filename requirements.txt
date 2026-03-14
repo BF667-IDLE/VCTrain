@@ -1,12 +1,20 @@
+# Platform-specific requirements section
+pip>=23.3
+wheel
+omegaconf>=2.0.6
+
+onnxruntime; sys_platform == 'darwin'
+onnxruntime-gpu; sys_platform != 'darwin
+
+
 # Core dependencies
 setuptools==81.0.0
-pip>=23.3; sys_platform == 'darwin'
-wheel; sys_platform == 'darwin'
-PyYAML; sys_platform == 'darwin'
 numpy==2.3.5
 requests>=2.31.0,<2.32.0
 tqdm
 wget
+faiss-cpu==1.7.3; python_version < "3.12"
+faiss-cpu>=1.7.3; python_version >= "3.12"
 
 
 # Audio processing
@@ -14,14 +22,15 @@ pydub==0.25.1
 librosa==0.11.0
 ffmpeg-python==0.2.0
 yt-dlp
+audio-separator[gpu]==0.41.1
 
 # Visualization and UI
-tqdm
-tensorboard
-tensorboardX
 matplotlib==3.10.1
 matplotlib-inline==0.1.7
-gradio
+pydantic==2.8.2
+pydantic_core==2.20.1
+gradio==4.44.1
+gradio_client==1.0.1
 
 # Machine learning and deep learning
 torch<2.6
@@ -30,4 +39,13 @@ torchvision<0.21
 faiss-cpu==1.10.0
 fairseq; python_version < '3.11'
 https://github.com/Politrees/PolTrain/releases/download/fixed-packages/fairseq-0.12.3-cp311-cp311-linux_x86_64.whl; python_version == '3.11'
-huggingface_hub
+huggingface-hub==0.24.6
+
+
+# Utility 
+tensorboardX
+tensorboard
+onnx>=1.14
+onnxslim
+onnx2torch>=1.5.15
+edge-tts>=7.2.7
