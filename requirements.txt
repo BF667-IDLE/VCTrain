@@ -14,7 +14,7 @@ tqdm
 wget
 faiss-cpu==1.7.3; python_version < "3.12"
 faiss-cpu>=1.7.3; python_version >= "3.12"
-
+pedalboard
 
 # Audio processing
 pydub==0.25.1
@@ -28,18 +28,23 @@ matplotlib==3.10.1
 matplotlib-inline==0.1.7
 pydantic==2.8.2
 pydantic_core==2.20.1
-gradio==4.36.0
+gradio==4.44.1
 gradio_client==1.0.1
 
+
 # Machine learning and deep learning
+transformers==4.42.4
+scikit-learn
+einops>=0.8.0
 torch<2.6
 torchaudio<2.6
 torchvision<0.21
-faiss-cpu==1.10.0
 fairseq; python_version < '3.11'
-https://github.com/Politrees/PolTrain/releases/download/fixed-packages/fairseq-0.12.3-cp311-cp311-linux_x86_64.whl; python_version == '3.11'
+https://github.com/PolTrain/releases/download/fixed-packages/fairseq-0.12.3-cp311-cp311-linux_x86_64.whl; python_version == '3.11'
 huggingface-hub==0.24.6
-
+local-attention
+torchcrepe
+ml-collections
 
 # Utility 
 tensorboardX
